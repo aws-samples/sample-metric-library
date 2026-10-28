@@ -1,0 +1,62 @@
+[
+  {
+    "id": 1,
+    "ticket": "I was charged twice for my order",
+    "predicted_intent": "billing",
+    "true_intent": "billing"
+  },
+  {
+    "id": 2,
+    "ticket": "Where is my package? It has been two weeks",
+    "predicted_intent": "shipping",
+    "true_intent": "shipping"
+  },
+  {
+    "id": 3,
+    "ticket": "I want my money back for the broken blender",
+    "predicted_intent": "refund",
+    "true_intent": "refund"
+  },
+  {
+    "id": 4,
+    "ticket": "How do I change my delivery address?",
+    "predicted_intent": "shipping",
+    "true_intent": "shipping"
+  },
+  {
+    "id": 5,
+    "ticket": "The invoice shows the wrong tax amount",
+    "predicted_intent": "billing",
+    "true_intent": "billing"
+  },
+  {
+    "id": 6,
+    "ticket": "Can I return the shoes I bought last month?",
+    "predicted_intent": "refund",
+    "true_intent": "refund"
+  },
+  {
+    "id": 7,
+    "ticket": "Do you ship to Canada?",
+    "predicted_intent": "other",
+    "true_intent": "shipping"
+  },
+  {
+    "id": 8,
+    "ticket": "My discount code did not apply at checkout",
+    "predicted_intent": "billing",
+    "true_intent": "billing"
+  },
+  {
+    "id": 9,
+    "ticket": "I never received a refund confirmation",
+    "predicted_intent": "billing",
+    "true_intent": "refund"
+  },
+  {
+    "id": 10,
+    "ticket": "What are your opening hours?",
+    "predicted_intent": "other",
+    "true_intent": "other"
+  }
+]

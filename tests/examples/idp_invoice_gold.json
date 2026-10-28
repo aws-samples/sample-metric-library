@@ -1,0 +1,91 @@
+[
+  {
+    "id": 1,
+    "invoice_number": "INV-2024-0041",
+    "vendor": "Acme Corporation",
+    "total": 1299.5,
+    "due_date": "2024-07-15",
+    "line_items": [
+      {"description": "Steel bracket", "quantity": 20, "unit_price": 12.5},
+      {"description": "Hex bolt M8", "quantity": 200, "unit_price": 0.35},
+      {"description": "Delivery", "quantity": 1, "unit_price": 979.5}
+    ]
+  },
+  {
+    "id": 2,
+    "invoice_number": "INV-2024-0042",
+    "vendor": "Acme Corporation",
+    "total": 1850.0,
+    "due_date": "2024-08-15",
+    "line_items": [
+      {"description": "Steel bracket", "quantity": 40, "unit_price": 12.5},
+      {"description": "Aluminium plate", "quantity": 10, "unit_price": 130.0},
+      {"description": "Delivery", "quantity": 1, "unit_price": 50.0}
+    ]
+  },
+  {
+    "id": 3,
+    "invoice_number": "INV-2024-0043",
+    "vendor": "Northwind Traders Ltd",
+    "total": 742.1,
+    "due_date": "2024-08-31",
+    "line_items": [
+      {"description": "Printer paper A4", "quantity": 30, "unit_price": 4.2},
+      {"description": "Toner cartridge", "quantity": 2, "unit_price": 89.0},
+      {"description": "Stapler", "quantity": 5, "unit_price": 6.42}
+    ]
+  },
+  {
+    "id": 4,
+    "invoice_number": "INV-2024-0044",
+    "vendor": "Northwind Traders Ltd",
+    "total": 890.0,
+    "due_date": "2024-09-01",
+    "line_items": [
+      {"description": "Office chair", "quantity": 2, "unit_price": 245.0},
+      {"description": "Desk lamp", "quantity": 4, "unit_price": 35.0},
+      {"description": "Monitor arm", "quantity": 2, "unit_price": 130.0}
+    ]
+  },
+  {
+    "id": 5,
+    "invoice_number": "INV-2024-0045",
+    "vendor": "Fabrikam Inc",
+    "total": 2340.0,
+    "due_date": "2024-03-10",
+    "line_items": [
+      {"description": "Consulting day", "quantity": 3, "unit_price": 780.0}
+    ]
+  },
+  {
+    "id": 6,
+    "invoice_number": "INV-2024-0046",
+    "vendor": "Fabrikam Inc",
+    "total": 415.0,
+    "due_date": "2024-10-20",
+    "line_items": [
+      {"description": "Lab gloves, box", "quantity": 25, "unit_price": 16.6}
+    ]
+  },
+  {
+    "id": 7,
+    "invoice_number": "INV-2024-0047",
+    "vendor": "Fabrikam Inc",
+    "total": 1298.0,
+    "due_date": "2024-11-30",
+    "line_items": [
+      {"description": "Workshop, half day", "quantity": 2, "unit_price": 590.0}
+    ]
+  },
+  {
+    "id": 8,
+    "invoice_number": "INV-2024-0048",
+    "vendor": "Acme Corporation",
+    "total": 96.0,
+    "due_date": "2024-12-01",
+    "line_items": [
+      {"description": "Cable ties, 100 pack", "quantity": 10, "unit_price": 4.8},
+      {"description": "Delivery", "quantity": 1, "unit_price": 48.0}
+    ]
+  }
+]

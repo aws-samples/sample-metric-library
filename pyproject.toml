@@ -1,0 +1,46 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "metric-library"
+version = "0.2.0"
+description = "Evaluation metrics library with 33+ metrics across multiple modalities including text, numeric, image, audio, and video data."
+requires-python = ">=3.12"
+
+dependencies = [
+    # Core — used by most metrics (accuracy, precision, recall, f1, match, MAE, MSE, RMSE, registry, data types)
+    "numpy>=2.1,<3",
+    # LLM-as-judge metrics — BedrockClient (bedrock_client.py); 1.34.116 adds the Converse API
+    "boto3>=1.34.116",
+    # Hungarian algorithm — comparison_functions.py (match metric)
+    "munkres>=1.1,<2",
+]
+
+[project.optional-dependencies]
+media = [
+    # Image data type — image_data.py; 13.0.0 fixes the known decoder CVEs
+    "pillow>=13.0.0",
+    # Video data type — video_data.py; 4.10.0.84 is the first that imports with numpy 2
+    "opencv-python>=4.10.0.84",
+    # Audio data type — audio_data.py; 0.13 bundles libsndfile 1.2.2, 0.12 bundled 1.2.0
+    "soundfile>=0.13",
+]
+
+dev = [
+    "pytest>=8.0.0",
+    # Pinned: the formatter's output changed between 0.8 and 0.9.
+    "ruff==0.9.10",
+    # Property-based tests — tests/test_prompt_handler.py (dev-only pin)
+    "hypothesis==6.168.3",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

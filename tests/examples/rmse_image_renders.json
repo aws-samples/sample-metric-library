@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1,
+    "scene": "sunset",
+    "pixel_offset": 10,
+    "generated_image": "rmse_images/generated_0.png",
+    "reference_image": "rmse_images/reference_0.png"
+  },
+  {
+    "id": 2,
+    "scene": "harbor",
+    "pixel_offset": 0,
+    "generated_image": "rmse_images/generated_1.png",
+    "reference_image": "rmse_images/reference_1.png"
+  },
+  {
+    "id": 3,
+    "scene": "forest",
+    "pixel_offset": 20,
+    "generated_image": "rmse_images/generated_2.png",
+    "reference_image": "rmse_images/reference_2.png"
+  }
+]

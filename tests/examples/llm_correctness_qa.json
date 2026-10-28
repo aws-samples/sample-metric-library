@@ -1,0 +1,32 @@
+[
+  {
+    "id": 1,
+    "question": "What is the capital of France?",
+    "answer": "Paris is the capital of France.",
+    "reference_answer": "Paris"
+  },
+  {
+    "id": 2,
+    "question": "How many legs does a spider have?",
+    "answer": "A spider has eight legs.",
+    "reference_answer": "eight"
+  },
+  {
+    "id": 3,
+    "question": "Who wrote Pride and Prejudice?",
+    "answer": "Jane Austen wrote it in 1813.",
+    "reference_answer": "Jane Austen"
+  },
+  {
+    "id": 4,
+    "question": "What is the boiling point of water at sea level in Celsius?",
+    "answer": "It boils at 90 degrees Celsius.",
+    "reference_answer": "100 degrees Celsius"
+  },
+  {
+    "id": 5,
+    "question": "Which planet is known as the Red Planet?",
+    "answer": "Mars.",
+    "reference_answer": "Mars"
+  }
+]

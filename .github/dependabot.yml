@@ -1,0 +1,15 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+version: 2
+updates:
+  # Keeps the commit hashes of the actions pinned in .github/workflows current.
+  # Python packages are left out: pyproject.toml sets minimum versions only,
+  # ruff is pinned on purpose, and the audit job in ci.yml reports vulnerable
+  # versions.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

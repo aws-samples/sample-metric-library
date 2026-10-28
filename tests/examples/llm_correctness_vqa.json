@@ -1,0 +1,102 @@
+[
+  {
+    "id": 1,
+    "question": [
+      "What color is the circle?",
+      "vqa_scene_images/scene_01.png"
+    ],
+    "answer": "The circle is red.",
+    "reference_answer": "red",
+    "note": "correct, paraphrased: a sentence where the reference is one word"
+  },
+  {
+    "id": 2,
+    "question": [
+      "How many squares are in the image?",
+      "vqa_scene_images/scene_02.png"
+    ],
+    "answer": "3",
+    "reference_answer": "3",
+    "note": "correct, exact"
+  },
+  {
+    "id": 3,
+    "question": [
+      "Which shape is above the green rectangle?",
+      "vqa_scene_images/scene_03.png"
+    ],
+    "answer": "A triangle.",
+    "reference_answer": "a yellow triangle",
+    "note": "correct, less specific: names the shape but not its color"
+  },
+  {
+    "id": 4,
+    "question": [
+      "Where is the sun in the picture?",
+      "vqa_scene_images/scene_04.png"
+    ],
+    "answer": "In the top left corner.",
+    "reference_answer": "in the top right corner",
+    "note": "wrong: the sun is top right"
+  },
+  {
+    "id": 5,
+    "question": [
+      "What is the background color behind the black cross?",
+      "vqa_scene_images/scene_05.png"
+    ],
+    "answer": "orange",
+    "reference_answer": "orange",
+    "note": "correct, exact"
+  },
+  {
+    "id": 6,
+    "question": [
+      "Which circle is larger, the purple one or the cyan one?",
+      "vqa_scene_images/scene_06.png"
+    ],
+    "answer": "The cyan circle is larger.",
+    "reference_answer": "the purple one",
+    "note": "wrong: the purple circle is larger"
+  },
+  {
+    "id": 7,
+    "question": [
+      "How many of the squares are red?",
+      "vqa_scene_images/scene_07.png"
+    ],
+    "answer": "three",
+    "reference_answer": "3",
+    "note": "correct, the number spelled out"
+  },
+  {
+    "id": 8,
+    "question": [
+      "Does the white line rise or fall from left to right?",
+      "vqa_scene_images/scene_08.png"
+    ],
+    "answer": "It rises from the bottom left to the top right.",
+    "reference_answer": "it rises",
+    "note": "correct, with extra detail"
+  },
+  {
+    "id": 9,
+    "question": [
+      "What phase of the moon is shown?",
+      "vqa_scene_images/scene_09.png"
+    ],
+    "answer": "A full moon.",
+    "reference_answer": "a crescent moon",
+    "note": "wrong: the moon is a crescent"
+  },
+  {
+    "id": 10,
+    "question": [
+      "Is the blue square filled or just an outline?",
+      "vqa_scene_images/scene_10.png"
+    ],
+    "answer": "It is an outline; the inside is white.",
+    "reference_answer": "just an outline",
+    "note": "correct, paraphrased"
+  }
+]

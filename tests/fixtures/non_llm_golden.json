@@ -1,0 +1,4367 @@
+{
+  "corpora": {
+    "edge": [
+      [
+        null,
+        "a"
+      ],
+      [
+        "a",
+        null
+      ],
+      [
+        "  ",
+        "a"
+      ]
+    ],
+    "label_sets": [
+      [
+        [
+          "a",
+          "b"
+        ],
+        [
+          "b",
+          "a"
+        ]
+      ],
+      [
+        [
+          "c"
+        ],
+        [
+          "c"
+        ]
+      ],
+      [
+        [
+          "d",
+          "e",
+          "f"
+        ],
+        [
+          "d",
+          "e",
+          "g"
+        ]
+      ],
+      [
+        [],
+        []
+      ],
+      [
+        [
+          "x"
+        ],
+        []
+      ],
+      [
+        [
+          "A",
+          "b"
+        ],
+        [
+          "a",
+          "B"
+        ]
+      ]
+    ],
+    "numeric_lists": [
+      [
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      [
+        [
+          1.0,
+          2.0,
+          3.0
+        ],
+        [
+          1.0,
+          2.0,
+          3.0
+        ]
+      ],
+      [
+        [
+          1,
+          2,
+          3
+        ],
+        [
+          1,
+          2
+        ]
+      ]
+    ],
+    "numeric_scalar": [
+      [
+        1.5,
+        1.0
+      ],
+      [
+        3,
+        3.0
+      ],
+      [
+        2.0,
+        4.5
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        -1.25,
+        1.25
+      ]
+    ],
+    "text": [
+      [
+        "cat",
+        "cat"
+      ],
+      [
+        "Dog ",
+        "dog"
+      ],
+      [
+        "bird",
+        "fish"
+      ],
+      [
+        "",
+        ""
+      ],
+      [
+        "",
+        "a"
+      ],
+      [
+        null,
+        null
+      ],
+      [
+        "a b c",
+        "c b a"
+      ],
+      [
+        "hello world",
+        "hello  world"
+      ]
+    ]
+  },
+  "excluded": {
+    "ItemSemanticMatch/edge": {
+      "error": "Cannot generate an embedding for empty text",
+      "failed_ordinal": 2
+    },
+    "ItemSemanticMatch/text": {
+      "error": "Cannot generate an embedding for empty text",
+      "failed_ordinal": 4
+    },
+    "MeanAbsoluteError/edge": {
+      "error": "MeanAbsoluteError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "MeanAbsoluteError/label_sets": {
+      "error": "MeanAbsoluteError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "MeanAbsoluteError/numeric_lists": {
+      "error": "MeanAbsoluteError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "MeanAbsoluteError/numeric_scalar": {
+      "error": "MeanAbsoluteError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "MeanAbsoluteError/text": {
+      "error": "MeanAbsoluteError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "MeanSquaredError/edge": {
+      "error": "MeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "MeanSquaredError/label_sets": {
+      "error": "MeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "MeanSquaredError/numeric_lists": {
+      "error": "MeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "MeanSquaredError/numeric_scalar": {
+      "error": "MeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "MeanSquaredError/text": {
+      "error": "MeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "NumericExactMatch/edge": {
+      "error": "Cannot convert    to numeric value",
+      "failed_ordinal": 2
+    },
+    "NumericExactMatch/label_sets": {
+      "error": "Cannot convert ['a' 'b'] to numeric value",
+      "failed_ordinal": 0
+    },
+    "NumericExactMatch/numeric_lists": {
+      "error": "Cannot convert [1 2] to numeric value",
+      "failed_ordinal": 0
+    },
+    "NumericExactMatch/text": {
+      "error": "Cannot convert cat to numeric value",
+      "failed_ordinal": 0
+    },
+    "NumericFuzzyMatch/edge": {
+      "error": "Cannot convert    to numeric value",
+      "failed_ordinal": 2
+    },
+    "NumericFuzzyMatch/label_sets": {
+      "error": "Cannot convert ['a' 'b'] to numeric value",
+      "failed_ordinal": 0
+    },
+    "NumericFuzzyMatch/numeric_lists": {
+      "error": "Cannot convert [1 2] to numeric value",
+      "failed_ordinal": 0
+    },
+    "NumericFuzzyMatch/text": {
+      "error": "Cannot convert cat to numeric value",
+      "failed_ordinal": 0
+    },
+    "RawSemanticMatch/edge": {
+      "error": "Cannot generate an embedding for empty text",
+      "failed_ordinal": 2
+    },
+    "RawSemanticMatch/text": {
+      "error": "Cannot generate an embedding for empty text",
+      "failed_ordinal": 4
+    },
+    "RootMeanSquaredError/edge": {
+      "error": "RootMeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "RootMeanSquaredError/label_sets": {
+      "error": "RootMeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "RootMeanSquaredError/numeric_lists": {
+      "error": "RootMeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "RootMeanSquaredError/numeric_scalar": {
+      "error": "RootMeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    },
+    "RootMeanSquaredError/text": {
+      "error": "RootMeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
+      "failed_ordinal": null
+    }
+  },
+  "metrics": [
+    "Accuracy",
+    "ItemExactMatch",
+    "ItemFuzzyMatch",
+    "ItemHungarianMatch",
+    "ItemSemanticMatch",
+    "ListExactMatch",
+    "ListFuzzyMatch",
+    "ListHungarianMatch",
+    "MeanAbsoluteError",
+    "MeanSquaredError",
+    "NumericExactMatch",
+    "NumericFuzzyMatch",
+    "RawExactMatch",
+    "RawFuzzyMatch",
+    "RawHungarianMatch",
+    "RawSemanticMatch",
+    "RootMeanSquaredError",
+    "TextExactMatch",
+    "TextFuzzyMatch",
+    "TextHungarianMatch"
+  ],
+  "results": {
+    "Accuracy/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "Accuracy/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6666666666666666,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "Accuracy/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6666666666666666,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "Accuracy/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.4,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "Accuracy/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.5,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemExactMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemExactMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.3333333333333333,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemExactMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.3333333333333333,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemExactMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.4,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemExactMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.375,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemFuzzyMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemFuzzyMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.688888888888889,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.33333333333333337,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.8,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemFuzzyMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6444444444444445,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.33333333333333337,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.6,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemFuzzyMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.5,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.5,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemFuzzyMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.73125,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.25,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.6,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemHungarianMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemHungarianMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.611111111111111,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.6666666666666666,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemHungarianMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 1.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemHungarianMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.2,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemHungarianMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.375,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemSemanticMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.8711246915648361,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.7845457697100897,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.640864584075072,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.8584396053491067,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 0.9428981902547479,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemSemanticMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6655436460976877,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.9205308869711671,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.07610005132189607,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemSemanticMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.4289344562451509,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.6703518424242038,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.24230486172656257,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.20381793052049935,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.02819764655448881,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListExactMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListExactMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.5,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListExactMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6666666666666666,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListExactMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.2,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListExactMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.375,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListFuzzyMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListFuzzyMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.688888888888889,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.8,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 0.33333333333333337,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListFuzzyMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.8666666666666667,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.6,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListFuzzyMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.5,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.5,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListFuzzyMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.73125,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.25,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.6,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListHungarianMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListHungarianMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.611111111111111,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.6666666666666666,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListHungarianMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 1.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListHungarianMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.2,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "ListHungarianMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.375,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "NumericExactMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.4,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "NumericFuzzyMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.7,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.5,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawExactMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawExactMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.3333333333333333,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawExactMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.3333333333333333,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawExactMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.4,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawExactMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.375,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawFuzzyMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawFuzzyMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.688888888888889,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.33333333333333337,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.8,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawFuzzyMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6444444444444445,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.33333333333333337,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.6,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawFuzzyMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.5,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.5,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawFuzzyMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.73125,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.25,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.6,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawHungarianMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawHungarianMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.611111111111111,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.6666666666666666,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawHungarianMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 1.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawHungarianMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.2,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawHungarianMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.375,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawSemanticMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.8711246915648361,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.7845457697100897,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.640864584075072,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.8584396053491067,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 0.9428981902547479,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawSemanticMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6655436460976877,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.9205308869711671,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.07610005132189607,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawSemanticMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.4289344562451509,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.6703518424242038,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.24230486172656257,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.20381793052049935,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.02819764655448881,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextExactMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextExactMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.5,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextExactMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.3333333333333333,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextExactMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.4,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextExactMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.625,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextFuzzyMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextFuzzyMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.688888888888889,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.33333333333333337,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.8,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextFuzzyMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6444444444444445,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.33333333333333337,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.6,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextFuzzyMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.6,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.5,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.5,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextFuzzyMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.73125,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.25,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.6,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextHungarianMatch/edge": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextHungarianMatch/label_sets": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 6,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.7777777777777778,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 6,
+        "total_count": 6,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.6666666666666666,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextHungarianMatch/numeric_lists": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 3,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 1.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 3,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextHungarianMatch/numeric_scalar": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 5,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.4,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 5,
+        "total_count": 5,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    },
+    "TextHungarianMatch/text": {
+      "aggregate": {
+        "coverage": 1.0,
+        "denominator": 8,
+        "failed_count": 0,
+        "method": "numeric_mean",
+        "score": 0.625,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 8,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 1.0,
+          "status": "completed"
+        }
+      ]
+    }
+  }
+}

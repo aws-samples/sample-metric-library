@@ -1,0 +1,72 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, so a new advisory for a dependency fails the audit job even
+    # when no pull request is open.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Tests and lint (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the library with the dev and media extras
+        run: python -m pip install -e ".[dev,media]"
+      - name: Lint
+        run: ruff check .
+      - name: Check the formatting
+        run: ruff format --check .
+      - name: Unit tests
+        run: python -m pytest -q
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          enable-cache: false
+      # The core and media dependencies at the newest versions and at the
+      # minimum versions that pyproject.toml allows.
+      - name: Resolve the dependencies
+        id: resolve
+        run: |
+          uv pip compile pyproject.toml --extra media --python-version 3.12 -o newest.txt
+          uv pip compile pyproject.toml --extra media --python-version 3.12 --resolution lowest-direct -o floors.txt
+      - name: Audit the newest versions
+        run: uvx pip-audit@2.10.1 -r newest.txt --no-deps --disable-pip -s osv --progress-spinner off
+      - name: Audit the minimum versions
+        if: ${{ !cancelled() && steps.resolve.outcome == 'success' }}
+        run: uvx pip-audit@2.10.1 -r floors.txt --no-deps --disable-pip -s osv --progress-spinner off

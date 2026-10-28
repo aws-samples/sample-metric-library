@@ -1,0 +1,95 @@
+[
+  {
+    "id": 1,
+    "invoice_number": "INV-2024-0041",
+    "vendor": "Acme Corporation",
+    "total": 1299.5,
+    "due_date": "2024-07-15",
+    "line_items": [
+      {"description": "Steel bracket", "quantity": 20, "unit_price": 12.5},
+      {"description": "Hex bolt M8", "quantity": 200, "unit_price": 0.35},
+      {"description": "Delivery", "quantity": 1, "unit_price": 979.5}
+    ],
+    "note": "every field extracted as written on the invoice"
+  },
+  {
+    "id": 2,
+    "invoice_number": "inv-2024-0042",
+    "vendor": "ACME CORPORATION",
+    "total": "$1,850.00",
+    "due_date": "15/08/2024",
+    "line_items": [
+      {"description": "Delivery", "quantity": 1, "unit_price": 50.0},
+      {"description": "Steel bracket", "quantity": 40, "unit_price": 12.5},
+      {"description": "Aluminium plate", "quantity": 10, "unit_price": 130.0}
+    ],
+    "note": "same values in another form: lowercase number, uppercase vendor, total as a currency string, day-first date, line items in another order"
+  },
+  {
+    "id": 3,
+    "invoice_number": "INV-2024-0O43",
+    "vendor": "Northwind Traders Ltd.",
+    "total": 742.1,
+    "due_date": "2024-08-31",
+    "line_items": [
+      {"description": "Printer paper A4", "quantity": 30, "unit_price": 4.2},
+      {"description": "Toner cartridge", "quantity": 3, "unit_price": 89.0},
+      {"description": "Stapler", "quantity": 5, "unit_price": 6.42}
+    ],
+    "note": "OCR read the digit 0 as the letter O in the invoice number; the toner quantity is 3 instead of 2"
+  },
+  {
+    "id": 4,
+    "invoice_number": "INV-2024-0044",
+    "vendor": "Northwind Traders",
+    "total": 980.0,
+    "due_date": "September 1, 2024",
+    "line_items": [
+      {"description": "Office chair", "quantity": 2, "unit_price": 245.0},
+      {"description": "Desk lamp", "quantity": 4, "unit_price": 35.0}
+    ],
+    "note": "vendor without its legal suffix, total off by 90, due date spelled out, one line item missing"
+  },
+  {
+    "id": 5,
+    "invoice_number": "INV-2024-0045",
+    "vendor": "Fabrikam Inc",
+    "total": "2,340.00",
+    "due_date": "2024-10-03",
+    "line_items": [
+      {"description": "Consulting day", "quantity": 3, "unit_price": 780.0}
+    ],
+    "note": "month and day swapped in the due date; everything else right"
+  },
+  {
+    "id": 6,
+    "invoice_number": "INV-2024-0046",
+    "vendor": "Contoso Pharmaceuticals",
+    "total": 415.0,
+    "due_date": "2024-10-20",
+    "line_items": [
+      {"description": "Lab gloves, box", "quantity": 25, "unit_price": 16.6}
+    ],
+    "note": "the buyer's name was extracted as the vendor"
+  },
+  {
+    "id": 7,
+    "invoice_number": "INV-2024-0047",
+    "vendor": "Fabrikam Inc",
+    "total": 1180.0,
+    "due_date": "2024-11-30",
+    "line_items": [
+      {"description": "Workshop, half day", "quantity": 2, "unit_price": 590.0}
+    ],
+    "note": "the subtotal before tax was extracted as the total"
+  },
+  {
+    "id": 8,
+    "invoice_number": "INV-2024-0048.",
+    "vendor": "Acme Corporation",
+    "total": 96.0,
+    "due_date": "2024-12-01",
+    "line_items": [],
+    "note": "a trailing period on the invoice number; no line items were found"
+  }
+]

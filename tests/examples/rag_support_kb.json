@@ -1,0 +1,101 @@
+[
+  {
+    "id": 1,
+    "question": "How long do I have to return an item?",
+    "answer": "You can return an item within 30 days of delivery for a full refund, as long as it is unused and in its original packaging.",
+    "reference_answer": "Items can be returned within 30 days of delivery for a full refund if they are unused and in their original packaging.",
+    "passages": [
+      "rag_page_images/returns_policy.png",
+      "A prepaid return label is included in every parcel shipped within the EU."
+    ],
+    "instructions": "Answer only from the knowledge-base passages provided. If they do not contain the answer, say that you do not know.",
+    "note": "grounded answer from a scanned policy page and a text passage: the baseline every metric should score well"
+  },
+  {
+    "id": 2,
+    "question": "Do you charge for returns?",
+    "answer": "Returns are free within the EU using the prepaid label in your parcel, and the refund reaches your original payment method within 5 business days. Returns from outside the EU cost a flat fee of 12 euro.",
+    "reference_answer": "Returns within the EU are free with the prepaid label included in the parcel; the refund is issued to the original payment method within 5 business days.",
+    "passages": [
+      "Returns are free for orders shipped within the EU. A prepaid return label is included in the parcel.",
+      "Refunds are issued to the original payment method within 5 business days of receiving the returned item."
+    ],
+    "instructions": "Answer only from the knowledge-base passages provided. If they do not contain the answer, say that you do not know.",
+    "note": "hallucinated detail: the 12 euro fee for non-EU returns appears in no passage"
+  },
+  {
+    "id": 3,
+    "question": "What voltage do your kettles run on?",
+    "answer": "Our kettles run on 220 to 240 volts at 50 hertz, the standard for European households.",
+    "reference_answer": "The kettles are rated for 220 to 240 volts at 50 hertz.",
+    "passages": [
+      "Kitchen appliances, including kettles, are covered by a two-year warranty against manufacturing defects.",
+      "Shipping to Switzerland takes 3 to 5 business days."
+    ],
+    "instructions": "Answer only from the knowledge-base passages provided. If they do not contain the answer, say that you do not know.",
+    "note": "retrieval miss: the passages say nothing about voltage, and the assistant answered from its own knowledge instead of saying it did not know"
+  },
+  {
+    "id": 4,
+    "question": "Can I pay with PayPal?",
+    "answer": "Yes. PayPal is accepted, along with Visa, Mastercard, American Express and Apple Pay.",
+    "reference_answer": "Yes, PayPal is one of the accepted payment methods, with Visa, Mastercard, American Express and Apple Pay.",
+    "passages": [
+      "Accepted payment methods: Visa, Mastercard, American Express, PayPal and Apple Pay.",
+      "Gift cards cannot be used to buy other gift cards.",
+      "The warehouse is closed on public holidays in the Netherlands."
+    ],
+    "instructions": "Answer only from the knowledge-base passages provided. If they do not contain the answer, say that you do not know.",
+    "note": "two irrelevant passages were retrieved and the assistant ignored them: robust to noise"
+  },
+  {
+    "id": 5,
+    "question": "How long is the warranty on headphones?",
+    "answer": "Your headphones are covered by a two-year warranty. Warranty claims are handled through the support portal.",
+    "reference_answer": "Headphones are covered by a one-year limited warranty; claims are made through the support portal.",
+    "passages": [
+      "rag_page_images/warranty_terms.tif",
+      "Extended warranty plans can be added within 30 days of purchase."
+    ],
+    "instructions": "Answer only from the knowledge-base passages provided. If they do not contain the answer, say that you do not know.",
+    "note": "misled by another line on the same page: the two-year term is the kitchen-appliance line of the scanned warranty page, whose headphones line says one year, so the answer is grounded in the context and still wrong"
+  },
+  {
+    "id": 6,
+    "question": "How do I change the delivery address of an order I have already placed?",
+    "answer": "You can change the delivery address yourself in your account under Orders, as long as the order has not been packed yet.",
+    "reference_answer": "Change the address in your account under Orders until the order status is Packed. After that, contact support with the order number and the carrier redirects the parcel for a 4 euro fee.",
+    "passages": [
+      "You can change the delivery address in your account under Orders until the order status is Packed.",
+      "Once an order is Packed, contact support with the order number; the carrier can redirect the parcel for a 4 euro fee.",
+      "Standard delivery takes 2 to 4 business days."
+    ],
+    "instructions": "Answer only from the knowledge-base passages provided. If they do not contain the answer, say that you do not know.",
+    "note": "incomplete: the second passage covers the packed case and the assistant left it out"
+  },
+  {
+    "id": 7,
+    "question": "Do you ship to Norway?",
+    "answer": "I'm sorry, I don't have any information about shipping to Norway.",
+    "reference_answer": "Yes. Norway is one of the non-EU destinations we ship to, together with Switzerland and the United Kingdom.",
+    "passages": [
+      "rag_page_images/shipping_destinations.png",
+      "Orders over 60 euro ship free within the EU."
+    ],
+    "instructions": "Answer only from the knowledge-base passages provided. If they do not contain the answer, say that you do not know.",
+    "note": "needless refusal: the scanned shipping page lists Norway and the assistant did not use it"
+  },
+  {
+    "id": 8,
+    "question": "I placed an order on Monday 3 June with standard delivery to Germany. When should it arrive, and what happens if it is late?",
+    "answer": "Standard delivery to Germany takes 2 to 4 business days, so your parcel should arrive by Friday 7 June at the latest. If it is more than 5 business days late, we reship it or refund it, whichever you prefer.",
+    "reference_answer": "Standard delivery to Germany takes 2 to 4 business days. If the parcel is more than 5 business days late, it is reshipped or refunded, as the customer prefers.",
+    "passages": [
+      "Standard delivery to Germany takes 2 to 4 business days.",
+      "If a parcel is more than 5 business days late, we reship it or refund it, whichever the customer prefers.",
+      "Express delivery is available for 9.90 euro."
+    ],
+    "instructions": "Answer only from the knowledge-base passages provided. If they do not contain the answer, say that you do not know.",
+    "note": "two passages combined into one answer; the arrival date is inferred from the delivery time, not stated in a passage"
+  }
+]

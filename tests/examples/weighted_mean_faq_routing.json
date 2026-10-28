@@ -1,0 +1,72 @@
+[
+  {
+    "id": 1,
+    "question": "Where is my order?",
+    "predicted_article": "kb-order-tracking",
+    "true_article": "kb-order-tracking",
+    "monthly_queries": 3200
+  },
+  {
+    "id": 2,
+    "question": "How do I reset my password?",
+    "predicted_article": "kb-password-reset",
+    "true_article": "kb-password-reset",
+    "monthly_queries": 2400
+  },
+  {
+    "id": 3,
+    "question": "Can I change my delivery address after ordering?",
+    "predicted_article": "kb-order-tracking",
+    "true_article": "kb-order-changes",
+    "monthly_queries": 2200
+  },
+  {
+    "id": 4,
+    "question": "How do I return an item?",
+    "predicted_article": "kb-refund-policy",
+    "true_article": "kb-returns",
+    "monthly_queries": 1500
+  },
+  {
+    "id": 5,
+    "question": "Do you ship to Canada?",
+    "predicted_article": "kb-shipping-rates",
+    "true_article": "kb-international-shipping",
+    "monthly_queries": 300
+  },
+  {
+    "id": 6,
+    "question": "How do I delete my account?",
+    "predicted_article": "kb-account-deletion",
+    "true_article": "kb-account-deletion",
+    "monthly_queries": 150
+  },
+  {
+    "id": 7,
+    "question": "Do you offer gift wrapping?",
+    "predicted_article": "kb-gift-options",
+    "true_article": "kb-gift-options",
+    "monthly_queries": 100
+  },
+  {
+    "id": 8,
+    "question": "Is my payment information stored?",
+    "predicted_article": "kb-payment-security",
+    "true_article": "kb-payment-security",
+    "monthly_queries": 70
+  },
+  {
+    "id": 9,
+    "question": "Can I buy a gift card?",
+    "predicted_article": "kb-gift-cards",
+    "true_article": "kb-gift-cards",
+    "monthly_queries": 50
+  },
+  {
+    "id": 10,
+    "question": "How do I unsubscribe from the newsletter?",
+    "predicted_article": "kb-email-preferences",
+    "true_article": "kb-email-preferences",
+    "monthly_queries": 30
+  }
+]

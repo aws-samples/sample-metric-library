@@ -1,0 +1,162 @@
+[
+  {
+    "id": 1,
+    "request": [
+      "Cut out the item on the right of the table onto a plain white background for our product listing, and describe it in one sentence.",
+      "product_cutout_images/scene_01.png"
+    ],
+    "output": [
+      "product_cutout_images/output_01.png",
+      "A red ceramic coffee mug with a curved handle."
+    ],
+    "reference_output": [
+      "product_cutout_images/reference_01.png",
+      "A red coffee mug with a handle."
+    ],
+    "note": "both parts correct"
+  },
+  {
+    "id": 2,
+    "request": [
+      "Cut out the item in the middle of the table onto a plain white background for our product listing, and describe it in one sentence.",
+      "product_cutout_images/scene_02.png"
+    ],
+    "output": [
+      "product_cutout_images/output_02.png",
+      "A small cactus in a blue ceramic pot."
+    ],
+    "reference_output": [
+      "product_cutout_images/reference_02.png",
+      "A leafy green houseplant in a terracotta pot."
+    ],
+    "note": "cutout correct; description wrong: a leafy plant in a terracotta pot, not a cactus in a blue pot"
+  },
+  {
+    "id": 3,
+    "request": [
+      "Cut out the item on the left of the table onto a plain white background for our product listing, and describe it in one sentence.",
+      "product_cutout_images/scene_03.png"
+    ],
+    "output": [
+      "product_cutout_images/output_03.png",
+      "A blue hardcover book."
+    ],
+    "reference_output": [
+      "product_cutout_images/reference_03.png",
+      "A yellow desk lamp with an adjustable arm and a round base."
+    ],
+    "note": "wrong item: the book in the middle was cut out and described instead of the lamp on the left"
+  },
+  {
+    "id": 4,
+    "request": [
+      "Cut out the item in the middle of the table onto a plain white background for our product listing, and describe it in one sentence.",
+      "product_cutout_images/scene_04.png"
+    ],
+    "output": [
+      "product_cutout_images/output_04.png",
+      "A pair of black sunglasses with oval lenses."
+    ],
+    "reference_output": [
+      "product_cutout_images/reference_04.png",
+      "A pair of black sunglasses."
+    ],
+    "note": "cutout incomplete: the right half of the sunglasses is missing; description correct"
+  },
+  {
+    "id": 5,
+    "request": [
+      "Cut out the item on the right of the table onto a plain white background for our product listing, and describe it in one sentence.",
+      "product_cutout_images/scene_05.png"
+    ],
+    "output": [
+      "product_cutout_images/output_05.png",
+      "A red water bottle with a white cap."
+    ],
+    "reference_output": [
+      "product_cutout_images/reference_05.png",
+      "A teal water bottle with a white cap."
+    ],
+    "note": "cutout correct; description wrong: the bottle is teal, not red"
+  },
+  {
+    "id": 6,
+    "request": [
+      "Cut out the item in the middle of the table onto a plain white background for our product listing, and describe it in one sentence.",
+      "product_cutout_images/scene_06.png"
+    ],
+    "output": [
+      "product_cutout_images/output_06.png",
+      "An analog wristwatch with a white dial and a brown leather strap."
+    ],
+    "reference_output": [
+      "product_cutout_images/reference_06.png",
+      "A wristwatch with a white face and a brown strap."
+    ],
+    "note": "both parts correct; the description is paraphrased and adds detail"
+  },
+  {
+    "id": 7,
+    "request": [
+      "Cut out the item on the right of the table onto a plain white background for our product listing, and describe it in one sentence.",
+      "product_cutout_images/scene_07.png"
+    ],
+    "output": [
+      "product_cutout_images/output_07.png",
+      "A pair of black over-ear headphones."
+    ],
+    "reference_output": [
+      "product_cutout_images/reference_07.png",
+      "A pair of black over-ear headphones."
+    ],
+    "note": "cutout wrong: the black headphones are recolored red; description correct, so the two parts disagree"
+  },
+  {
+    "id": 8,
+    "request": [
+      "Cut out the item on the left of the table onto a plain white background for our product listing, and describe it in one sentence.",
+      "product_cutout_images/scene_08.png"
+    ],
+    "output": [
+      "product_cutout_images/output_08.png",
+      "A blue hardcover book."
+    ],
+    "reference_output": [
+      "product_cutout_images/reference_08.png",
+      "A blue hardcover book."
+    ],
+    "note": "both parts correct; the cutout is smaller and off-center, which does not matter"
+  },
+  {
+    "id": 9,
+    "request": [
+      "Cut out the item on the left of the table onto a plain white background for our product listing, and describe it in one sentence.",
+      "product_cutout_images/scene_09.png"
+    ],
+    "output": [
+      "product_cutout_images/output_09.png",
+      "A yellow desk lamp with a jointed arm and a round base."
+    ],
+    "reference_output": [
+      "product_cutout_images/reference_09.png",
+      "A yellow desk lamp with an adjustable arm and a round base."
+    ],
+    "note": "both parts correct; the description is paraphrased"
+  },
+  {
+    "id": 10,
+    "request": [
+      "Cut out the item in the middle of the table onto a plain white background for our product listing, and describe it in one sentence.",
+      "product_cutout_images/scene_10.png"
+    ],
+    "output": [
+      "product_cutout_images/output_10.png",
+      "A potted plant with broad green leaves in a terracotta pot."
+    ],
+    "reference_output": [
+      "product_cutout_images/reference_10.png",
+      "A leafy green houseplant in a terracotta pot."
+    ],
+    "note": "both parts correct; the description is paraphrased"
+  }
+]
