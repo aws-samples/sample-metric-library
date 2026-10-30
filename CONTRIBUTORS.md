@@ -11,3 +11,4 @@
 - Andrei Kapustin
 - Negin Sokhandan
 - Tony Jiang
+- Vincil Bishop
