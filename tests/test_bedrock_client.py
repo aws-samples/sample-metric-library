@@ -15,7 +15,8 @@ from unittest.mock import Mock, call
 
 import pytest
 
-from metric_library.core.bedrock_client import BedrockClient
+from metric_library.core.bedrock_client import MAX_POOL_CONNECTIONS, BedrockClient
+from metric_library.core.evaluation import MAX_WORKERS_LIMIT
 
 # A judge result schema of the kind a forced tool call would be given.
 EVALUATION_SCHEMA = {
@@ -263,3 +264,18 @@ class TestEmbeddings:
             call(modelId="test-model", body=json.dumps({"inputText": "hello"}))
         ]
         runtime.converse.assert_not_called()
+
+
+class TestConnectionPool:
+    """The engine's workers share one client, so its pool keeps a connection each."""
+
+    def test_the_pool_keeps_a_connection_for_every_engine_worker(
+        self, runtime, monkeypatch
+    ):
+        config = Mock()
+        monkeypatch.setattr("metric_library.core.bedrock_client.Config", config)
+
+        BedrockClient(model_id="test-model", region="us-east-1")
+
+        assert config.call_args.kwargs["max_pool_connections"] == MAX_POOL_CONNECTIONS
+        assert MAX_POOL_CONNECTIONS >= MAX_WORKERS_LIMIT

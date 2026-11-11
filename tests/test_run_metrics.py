@@ -3115,6 +3115,10 @@ class TestJudgeImageFormats:
                 str(tmp_path / "result.json"),
                 "--custom-metrics-path",
                 str(plugin_dir / "custom_metrics.py"),
+                # The tests read the judge log in record order, so the records
+                # are judged one at a time.
+                "--max-workers",
+                "1",
             ],
             cwd=str(tmp_path),
             env={"JUDGE_LOG": str(log_path), "SAVE_LOG": str(tmp_path / "saves.log")},
@@ -4636,3 +4640,127 @@ def _png_bytes(width=2, height=2, rgb=(255, 0, 0)):
         + chunk(b"IDAT", zlib.compress(scanlines))
         + chunk(b"IEND", b"")
     )
+
+
+class TestMaxWorkersOption:
+    """``--max-workers`` sets how many samples of each metric run at the same time."""
+
+    @staticmethod
+    def _overlap_plugin(tmp_path, workers, thread_safe):
+        """Write a custom metric whose score is the number of samples running.
+
+        Each sample waits at a barrier of ``workers``, so fewer samples at the
+        same time fail the run, then stays a moment so that more would overlap.
+        The highest score is the most samples that ran at once.
+        """
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        plugin_path = plugin_dir / "custom_metrics.py"
+        plugin_path.write_text(
+            textwrap.dedent(f"""\
+            import threading
+            import time
+
+            from metric_library.core.base import Metric
+            from metric_library.core.registry import MetricRegistry
+
+            BARRIER = threading.Barrier({workers}, timeout=10)
+            LOCK = threading.Lock()
+            RUNNING = [0]
+
+
+            @MetricRegistry.register
+            class Overlap(Metric):
+                thread_safe = {thread_safe}
+
+                def compute(self, sample, client):
+                    with LOCK:
+                        RUNNING[0] += 1
+                        running = RUNNING[0]
+                    try:
+                        BARRIER.wait()
+                        time.sleep(0.02)
+                    finally:
+                        with LOCK:
+                            RUNNING[0] -= 1
+                    return float(running)
+            """)
+        )
+        return plugin_path
+
+    @pytest.mark.parametrize(
+        ("options", "thread_safe", "workers"),
+        [
+            pytest.param([], True, 4, id="default"),
+            pytest.param(["--max-workers", "2"], True, 2, id="two"),
+            pytest.param(["--max-workers", "1"], True, 1, id="one"),
+            pytest.param([], False, 1, id="not-thread-safe"),
+        ],
+    )
+    def test_the_samples_of_a_metric_run_max_workers_at_a_time(
+        self, tmp_path, options, thread_safe, workers
+    ):
+        # Overlap keeps its default aggregator, so the option also reaches a
+        # metric that --aggregation-methods leaves on its default. A metric
+        # that does not set thread_safe = True runs one sample at a time.
+        records_path = tmp_path / "records.json"
+        records_path.write_text(
+            json.dumps([{"pred": f"p{index}", "gold": "g"} for index in range(8)])
+        )
+        output_path = tmp_path / "result.json"
+
+        result = _run_evaluation(
+            records_path,
+            output_path,
+            "Overlap",
+            "--custom-metrics-path",
+            str(self._overlap_plugin(tmp_path, workers, thread_safe)),
+            *options,
+        )
+
+        assert result.returncode == 0, result.stderr
+        entries = _full_output(result, output_path)["data"]["samples"]["Overlap"]
+        assert [entry["status"] for entry in entries] == ["completed"] * 8
+        assert max(entry["score"] for entry in entries) == workers
+        assert [entry["sample_id"] for entry in entries] == [
+            str(index) for index in range(1, 9)
+        ]
+
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            pytest.param("0", "max_workers must be at least 1", id="zero"),
+            pytest.param("33", "max_workers must be at most 32", id="above-limit"),
+        ],
+    )
+    def test_a_value_out_of_range_is_the_pre_execution_error_envelope(
+        self, sample_data, tmp_path, value, message
+    ):
+        output_path = tmp_path / "result.json"
+
+        result = _run_evaluation(
+            sample_data, output_path, "Accuracy", "--max-workers", value
+        )
+
+        assert result.returncode == 1
+        output = _full_output(result, output_path, "stderr")
+        assert set(output) == ENVELOPE_KEYS
+        assert output["ok"] is False
+        assert output["status"] == "failed"
+        assert output["data"] is None
+        assert output["errors"] == [message]
+
+    def test_a_value_that_is_not_an_integer_is_an_argparse_error(
+        self, sample_data, tmp_path
+    ):
+        output_path = tmp_path / "result.json"
+
+        result = _run_evaluation(
+            sample_data, output_path, "Accuracy", "--max-workers", "four"
+        )
+
+        assert result.returncode == 2
+        assert result.stdout == ""
+        assert "usage:" in result.stderr
+        assert "argument --max-workers: invalid int value: 'four'" in result.stderr
+        assert not output_path.exists()

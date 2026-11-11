@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from numbers import Real
 from typing import Callable
@@ -36,7 +38,7 @@ from .aggregation import (
     validate_fail_fast_sequence,
 )
 from .base import Metric
-from .bedrock_client import BedrockClient
+from .bedrock_client import MAX_POOL_CONNECTIONS, BedrockClient
 from .input_policy import InputPolicy
 from .data import DataType, Modality
 from .data.text_data import TextData
@@ -51,6 +53,20 @@ logger = logging.getLogger(__name__)
 # overflow (5 ** 9), so the backoff formula needs no special cases.
 MAX_ATTEMPTS_LIMIT = 10
 MULTIPLIER_LIMIT = 5.0
+
+# How many samples of a thread-safe metric are scored at the same time, by
+# default and at most. The limit is the connection pool of the client the
+# workers share, so that every worker has a pooled connection.
+DEFAULT_MAX_WORKERS = 4
+MAX_WORKERS_LIMIT = MAX_POOL_CONNECTIONS
+
+# A sample is handed to a worker only while it is fewer than this many times
+# the number of workers past the first sample still being scored. That bounds
+# how many later samples a failure can leave scored and SKIPPED, while the
+# workers keep going past a slow sample. In a simulation of 4 workers on 2-5 s
+# judge calls with 5% at 20-40 s, 8 kept the speedup of unbounded scheduling,
+# and 1 lost 40% of it.
+SAMPLES_AHEAD_PER_WORKER = 8
 
 # One ``compute_matrix`` call scores at most this many predicted items and
 # this many reference items.
@@ -170,6 +186,16 @@ class EvaluationConfiguration:
     the default, scores each sample as it is. ``LabelSet`` and ``ListItems``
     score each candidate pair of items and require the ``prf`` aggregator,
     whose ``thresholds`` set the lowest pair score of a true positive.
+
+    ``max_workers`` is how many samples of a metric whose ``thread_safe`` is
+    True are scored at the same time, each on its own thread; any other
+    metric, or ``max_workers=1``, is scored one sample at a time on the
+    calling thread. Samples are handed out in input order, fewer than
+    ``SAMPLES_AHEAD_PER_WORKER * max_workers`` past the first one still being
+    scored, and the results keep the input order. Once a sample fails, no
+    sample starts and no later sample makes another attempt; the failure
+    reported is the first in input order, and every later sample is skipped,
+    also one that was already scored.
     """
 
     max_attempts: int = 3
@@ -181,6 +207,8 @@ class EvaluationConfiguration:
     max_delay: float = 30.0
     thresholds: tuple[float, ...] | None = None
     matcher: Matcher = WholeValue()
+    # Last, so that a configuration built positionally keeps its meaning.
+    max_workers: int = DEFAULT_MAX_WORKERS
 
     def __post_init__(self) -> None:
         if isinstance(self.max_attempts, bool) or not isinstance(
@@ -191,6 +219,13 @@ class EvaluationConfiguration:
             raise ValueError("max_attempts must be at least 1")
         if self.max_attempts > MAX_ATTEMPTS_LIMIT:
             raise ValueError(f"max_attempts must be at most {MAX_ATTEMPTS_LIMIT}")
+
+        if isinstance(self.max_workers, bool) or not isinstance(self.max_workers, int):
+            raise TypeError("max_workers must be an integer")
+        if self.max_workers < 1:
+            raise ValueError("max_workers must be at least 1")
+        if self.max_workers > MAX_WORKERS_LIMIT:
+            raise ValueError(f"max_workers must be at most {MAX_WORKERS_LIMIT}")
 
         initial_delay = _normalize_timing_value("initial_delay", self.initial_delay)
         multiplier = _normalize_timing_value("multiplier", self.multiplier)
@@ -297,18 +332,59 @@ class _LazyClient:
 
     The factory runs at the first attribute read, and the engine keeps that
     client for the rest of the evaluation, so it builds at most one client. A
-    metric that never reads the client never builds it. A factory error
-    surfaces at that first read, so it fails the sample that made it.
+    lock makes workers that first read it at the same time wait for that one
+    client. A metric that never reads the client never builds it. A factory
+    error surfaces at that first read, so it fails the sample that made it. A
+    lasting error, such as a missing profile, is raised again at every later
+    read, so the factory runs once; a transient one is retried with its sample.
     """
 
     def __init__(self, factory: Callable[[], BedrockClient]):
         self._factory = factory
         self._client: BedrockClient | None = None
+        self._error: Exception | None = None
+        self._lock = threading.Lock()
 
     def __getattr__(self, name: str):
-        if self._client is None:
-            self._client = self._factory()
-        return getattr(self._client, name)
+        with self._lock:
+            if self._error is not None:
+                raise self._error
+            if self._client is None:
+                try:
+                    self._client = self._factory()
+                except Exception as error:
+                    if not _classify_failure(error)[0]:
+                        self._error = error
+                    raise
+            client = self._client
+        return getattr(client, name)
+
+
+class _SampleSkipped(Exception):
+    """A sample stopped because an earlier sample failed: it is SKIPPED."""
+
+
+class _Cutoff:
+    """The ordinal of the earliest failed sample, which every worker reads.
+
+    Only the scheduler writes it. ``check`` raises ``_SampleSkipped`` for a
+    later sample, so a sample whose result would be SKIPPED makes no further
+    Bedrock call; after ``stop_all`` it raises for every sample.
+    """
+
+    def __init__(self) -> None:
+        self.ordinal: int | None = None
+
+    def record(self, ordinal: int) -> None:
+        if self.ordinal is None or ordinal < self.ordinal:
+            self.ordinal = ordinal
+
+    def stop_all(self) -> None:
+        self.ordinal = -1
+
+    def check(self, sample: EvaluationSample) -> None:
+        if self.ordinal is not None and sample.ordinal > self.ordinal:
+            raise _SampleSkipped
 
 
 def evaluate_metric(
@@ -325,7 +401,9 @@ def evaluate_metric(
     """Score every sample of one metric with retries and aggregate the results.
 
     The client comes from ``client_factory`` (``BedrockClient`` by default)
-    when the metric first reads it.
+    when the metric first reads it. Up to ``configuration.max_workers`` samples
+    of a thread-safe metric are scored at the same time; the results keep the
+    input order.
     """
     if sleeper is None:
         sleeper = time.sleep
@@ -335,6 +413,8 @@ def evaluate_metric(
     metric_name = metric.name
     if not isinstance(metric_name, str) or not metric_name.strip():
         raise ValueError("metric.name must be a non-empty string")
+    if not isinstance(metric.thread_safe, bool):
+        raise TypeError(f"thread_safe must be True or False for {metric_name}")
 
     configuration = configuration or EvaluationConfiguration()
     matcher = configuration.matcher
@@ -370,53 +450,153 @@ def evaluate_metric(
         prediction_count,
     )
     client = _LazyClient(client_factory or BedrockClient)
-    results: list[SampleResult] = []
+    cutoff = _Cutoff()
 
-    for index, sample in enumerate(samples):
-        try:
-            if isinstance(matcher, WholeValue):
-                result = _score_with_retries(
-                    metric, sample, client, configuration, sleeper
-                )
-            else:
-                result = _score_items(
-                    metric,
-                    sample,
-                    matcher,
-                    aggregation.thresholds[0],
-                    client,
-                    configuration,
-                    sleeper,
-                )
-            results.append(result)
-        except Exception as error:
-            # Stop here: keep every earlier success, mark this sample failed,
-            # and skip the rest so the aggregate is explicitly failed.
-            results.append(
-                SampleResult(
-                    sample_id=sample.sample_id,
-                    ordinal=sample.ordinal,
-                    status=SampleStatus.FAILED,
-                    error=_safe_error(error),
-                )
+    def score(sample: EvaluationSample) -> SampleResult:
+        if isinstance(matcher, WholeValue):
+            return _score_with_retries(
+                metric, sample, client, configuration, sleeper, cutoff
             )
-            results.extend(
-                SampleResult(
-                    sample_id=remaining.sample_id,
-                    ordinal=remaining.ordinal,
-                    status=SampleStatus.SKIPPED,
-                )
-                for remaining in samples[index + 1 :]
-            )
-            break
+        return _score_items(
+            metric,
+            sample,
+            matcher,
+            aggregation.thresholds[0],
+            client,
+            configuration,
+            sleeper,
+            cutoff,
+        )
 
-    sample_results = tuple(results)
+    workers = min(configuration.max_workers, len(samples))
+    # Only a metric that declares itself thread-safe gets several workers.
+    if workers > 1 and metric.thread_safe:
+        outcomes = _score_concurrently(samples, score, workers, cutoff)
+    else:
+        outcomes = _score_sequentially(samples, score)
+
+    sample_results = _fail_fast_results(samples, outcomes)
     aggregate = aggregate_samples(sample_results, aggregation)
     return MetricEvaluationResult(
         metric_name=metric_name,
         samples=sample_results,
         aggregate=aggregate,
     )
+
+
+def _score_sequentially(
+    samples: tuple[EvaluationSample, ...],
+    score: Callable[[EvaluationSample], SampleResult],
+) -> dict[int, SampleResult | Exception]:
+    """Score the samples one after another on the calling thread.
+
+    Returns the result or the error of each scored sample by ordinal; the
+    first error stops the scoring.
+    """
+    outcomes: dict[int, SampleResult | Exception] = {}
+    for sample in samples:
+        try:
+            outcomes[sample.ordinal] = score(sample)
+        except Exception as error:
+            outcomes[sample.ordinal] = error
+            break
+    return outcomes
+
+
+def _score_concurrently(
+    samples: tuple[EvaluationSample, ...],
+    score: Callable[[EvaluationSample], SampleResult],
+    workers: int,
+    cutoff: _Cutoff,
+) -> dict[int, SampleResult | Exception]:
+    """Score up to ``workers`` samples at the same time.
+
+    Returns the result or the error of each scored sample by ordinal. Samples
+    are submitted in input order, and only while they are fewer than
+    ``SAMPLES_AHEAD_PER_WORKER * workers`` past the first one without an
+    outcome. A failure sets ``cutoff``: no sample is submitted after it, and a
+    later sample stops before its next attempt, though a call in flight runs
+    to its end, as a thread cannot be stopped. Every sample before the first
+    failure in input order was submitted earlier and has finished, so
+    ``_fail_fast_results`` gives the results of scoring one sample after
+    another.
+    """
+    outcomes: dict[int, SampleResult | Exception] = {}
+    running: dict[Future, EvaluationSample] = {}
+    window = SAMPLES_AHEAD_PER_WORKER * workers
+    first_open = 0  # the lowest ordinal without an outcome
+    upcoming = 0  # the ordinal of the next sample to submit
+    executor = ThreadPoolExecutor(max_workers=workers)
+    try:
+        while True:
+            while (
+                cutoff.ordinal is None
+                and upcoming < len(samples)
+                and len(running) < workers
+                and upcoming < first_open + window
+            ):
+                sample = samples[upcoming]
+                running[executor.submit(score, sample)] = sample
+                upcoming += 1
+            if not running:
+                break
+            done, _ = wait(running, return_when=FIRST_COMPLETED)
+            for future in done:
+                sample = running.pop(future)
+                try:
+                    outcomes[sample.ordinal] = future.result()
+                except _SampleSkipped:
+                    pass  # an earlier sample failed: this one is SKIPPED
+                except Exception as error:
+                    # Only an Exception fails the sample. A BaseException,
+                    # such as KeyboardInterrupt, propagates, as with one worker.
+                    outcomes[sample.ordinal] = error
+                    cutoff.record(sample.ordinal)
+            while first_open in outcomes:
+                first_open += 1
+    except BaseException:
+        # Return at once: start nothing more, stop every running sample before
+        # its next attempt, and let the calls in flight end on their own.
+        cutoff.stop_all()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    executor.shutdown()
+    return outcomes
+
+
+def _fail_fast_results(
+    samples: tuple[EvaluationSample, ...],
+    outcomes: dict[int, SampleResult | Exception],
+) -> tuple[SampleResult, ...]:
+    """Keep the results up to the first error in input order, then stop.
+
+    That sample is FAILED and every later sample is SKIPPED, even one that
+    completed on another worker, so the aggregate is explicitly failed.
+    """
+    results: list[SampleResult] = []
+    for index, sample in enumerate(samples):
+        outcome = outcomes[sample.ordinal]
+        if isinstance(outcome, SampleResult):
+            results.append(outcome)
+            continue
+        results.append(
+            SampleResult(
+                sample_id=sample.sample_id,
+                ordinal=sample.ordinal,
+                status=SampleStatus.FAILED,
+                error=_safe_error(outcome),
+            )
+        )
+        results.extend(
+            SampleResult(
+                sample_id=remaining.sample_id,
+                ordinal=remaining.ordinal,
+                status=SampleStatus.SKIPPED,
+            )
+            for remaining in samples[index + 1 :]
+        )
+        break
+    return tuple(results)
 
 
 def _check_matcher(
@@ -482,10 +662,11 @@ def _score_with_retries(
     client: BedrockClient,
     configuration: EvaluationConfiguration,
     sleeper: Callable[[float], None],
+    cutoff: _Cutoff,
 ) -> SampleResult:
     """Score one whole sample: the metric score is the sample score."""
     output = _call_with_retries(
-        lambda: metric.compute(sample, client), sample, configuration, sleeper
+        lambda: metric.compute(sample, client), sample, configuration, sleeper, cutoff
     )
     if isinstance(output, SampleOutput):
         return SampleResult(
@@ -511,6 +692,7 @@ def _score_items(
     client: BedrockClient,
     configuration: EvaluationConfiguration,
     sleeper: Callable[[float], None],
+    cutoff: _Cutoff,
 ) -> SampleResult:
     """Score every candidate pair of items of each class and record the matches.
 
@@ -534,7 +716,7 @@ def _score_items(
         columns = [item for c, item in expected if c == item_class]
         if isinstance(metric, LLMBatchMetric) and len(rows) * len(columns) > 1:
             scores = _matrix_scores(
-                metric, sample, rows, columns, client, configuration, sleeper
+                metric, sample, rows, columns, client, configuration, sleeper, cutoff
             )
         else:
             scores = []
@@ -554,6 +736,7 @@ def _score_items(
                         pair,
                         configuration,
                         sleeper,
+                        cutoff,
                     )
                     row.append(
                         output.score if isinstance(output, SampleOutput) else output
@@ -601,6 +784,7 @@ def _matrix_scores(
     client: BedrockClient,
     configuration: EvaluationConfiguration,
     sleeper: Callable[[float], None],
+    cutoff: _Cutoff,
 ) -> list[list[float]]:
     """Score one class with one ``compute_matrix`` call for each block of items."""
     scores = [[] for _ in rows]
@@ -615,6 +799,7 @@ def _matrix_scores(
                 sample,
                 configuration,
                 sleeper,
+                cutoff,
             )
             if not (
                 isinstance(block, list)
@@ -638,15 +823,22 @@ def _call_with_retries(
     sample: EvaluationSample,
     configuration: EvaluationConfiguration,
     sleeper: Callable[[float], None],
+    cutoff: _Cutoff,
 ):
-    """Run one metric call for ``sample`` and retry only eligible transient failures."""
+    """Run one metric call for ``sample`` and retry only eligible transient failures.
+
+    Before each attempt and each wait, ``cutoff`` stops a sample that an
+    earlier failed sample has made SKIPPED.
+    """
     for failed_attempt in range(1, configuration.max_attempts + 1):
+        cutoff.check(sample)
         try:
             return call()
         except Exception as error:
             is_transient, category = _classify_failure(error)
             if not is_transient or failed_attempt == configuration.max_attempts:
                 raise
+            cutoff.check(sample)
 
             delay = min(
                 configuration.max_delay,

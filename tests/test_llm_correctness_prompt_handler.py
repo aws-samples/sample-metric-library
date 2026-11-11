@@ -22,7 +22,12 @@ from unittest.mock import Mock, call
 import pytest
 
 import metric_library.metrics  # noqa: F401 - registers built-in metrics
-from metric_library import EvaluationSample, EvaluationStatus, SampleStatus
+from metric_library import (
+    EvaluationConfiguration,
+    EvaluationSample,
+    EvaluationStatus,
+    SampleStatus,
+)
 from metric_library.core.bedrock_client import BedrockClient
 from metric_library.core.data import DataType, Modality
 from metric_library.core.data.text_data import TextData
@@ -39,6 +44,13 @@ def _forbid_live_aws(monkeypatch):
 
     monkeypatch.setattr("metric_library.core.bedrock_client.boto3.client", fail)
     monkeypatch.setattr("metric_library.core.bedrock_client.boto3.Session", fail)
+
+
+# LLM metrics are thread-safe, so the engine judges several of their samples
+# at the same time. ``_fake_client`` answers in call order, so a test that
+# checks which answer each sample got, or the order of the calls, scores one
+# sample at a time.
+SEQUENTIAL = EvaluationConfiguration(max_workers=1)
 
 
 # The default judge role ``LLMMetric.role`` returns. Every request sends it as
@@ -404,7 +416,13 @@ class TestContextAlignment:
         factory, client = _fake_client([_judge(0.2), _judge(0.4)])
 
         result = evaluate_metric(
-            metric, predictions, references, context, prompts, client_factory=factory
+            metric,
+            predictions,
+            references,
+            context,
+            prompts,
+            configuration=SEQUENTIAL,
+            client_factory=factory,
         )
 
         assert result.score == sum([0.2, 0.4]) / 2
@@ -559,7 +577,13 @@ class TestJudgeFailures:
         )
 
         result = evaluate_metric(
-            metric, predictions, references, context, prompts, client_factory=factory
+            metric,
+            predictions,
+            references,
+            context,
+            prompts,
+            configuration=SEQUENTIAL,
+            client_factory=factory,
         )
 
         assert result.status is EvaluationStatus.FAILED
@@ -587,7 +611,13 @@ class TestJudgeFailures:
         factory, client = _fake_client([_judge(0.2), provider_error, _judge(0.8)])
 
         result = evaluate_metric(
-            metric, predictions, references, context, prompts, client_factory=factory
+            metric,
+            predictions,
+            references,
+            context,
+            prompts,
+            configuration=SEQUENTIAL,
+            client_factory=factory,
         )
 
         assert result.status is EvaluationStatus.FAILED
@@ -638,7 +668,13 @@ class TestThreeSampleEvaluation:
         factory, client = _fake_client([_judge(0.2), _judge(0.5), _judge(0.8)])
 
         result = evaluate_metric(
-            metric, predictions, references, context, prompts, client_factory=factory
+            metric,
+            predictions,
+            references,
+            context,
+            prompts,
+            configuration=SEQUENTIAL,
+            client_factory=factory,
         )
 
         factory.assert_called_once_with()
@@ -713,6 +749,7 @@ class TestOtherMetricsShareTheComposition:
             metric,
             [_text("candidate-0"), _text("candidate-1")],
             [],
+            configuration=SEQUENTIAL,
             client_factory=factory,
         )
 
@@ -1228,6 +1265,7 @@ class TestMultiPartRoles:
             [_text("r")] * 2,
             None,
             [_text("q")] * 2,
+            configuration=SEQUENTIAL,
             client_factory=factory,
         )
 
@@ -1472,7 +1510,13 @@ class TestJudgeReasoningIsKept:
         client = _injected_client([replies[1]])
 
         result = evaluate_metric(
-            metric, predictions, references, context, prompts, client_factory=factory
+            metric,
+            predictions,
+            references,
+            context,
+            prompts,
+            configuration=SEQUENTIAL,
+            client_factory=factory,
         )
         sample_output = metric.compute(_sample(1), client)
 
