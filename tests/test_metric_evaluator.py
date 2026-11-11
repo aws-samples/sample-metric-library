@@ -60,7 +60,6 @@ from metric_library.core.evaluation import (
     MAX_ATTEMPTS_LIMIT,
     MAX_WORKERS_LIMIT,
     MULTIPLIER_LIMIT,
-    SAMPLES_AHEAD_PER_WORKER,
 )
 from metric_library.core.input_policy import InputPolicy
 from metric_library.core.llm_metric import LLMMetric
@@ -2386,46 +2385,6 @@ class TestConcurrentScoring:
                 [],
                 client_factory=client_factory,
             )
-
-    def test_samples_are_handed_out_only_near_the_first_open_sample(self, monkeypatch):
-        # Sample 0 stays open while the other worker scores the later samples:
-        # it gets those inside the window and no further one. Then sample 0
-        # fails, so every later sample is SKIPPED, also the scored ones.
-        _register(monkeypatch, ProbeMetric)
-        window = SAMPLES_AHEAD_PER_WORKER * 2
-        started = []
-        last_in_window = threading.Event()
-        past_window = threading.Event()
-
-        def score(sample):
-            started.append(sample.ordinal)
-            if sample.ordinal == window - 1:
-                last_in_window.set()
-            if sample.ordinal >= window:
-                past_window.set()
-            if sample.ordinal == 0:
-                last_in_window.wait(timeout=10)
-                # Time for the scheduler to hand out a sample past the window,
-                # which it must not do while sample 0 is open.
-                past_window.wait(timeout=0.2)
-                raise ValueError("sample 0 failed")
-            return 1.0
-
-        client_factory, _ = _probe_client(score)
-
-        result = MetricRegistry.compute_metric(
-            "ProbeMetric",
-            _texts([f"value-{index}" for index in range(window + 10)]),
-            [],
-            configuration=EvaluationConfiguration(max_workers=2),
-            client_factory=client_factory,
-        )
-
-        assert sorted(started) == list(range(window))
-        assert result.samples[0].status is SampleStatus.FAILED
-        assert all(
-            sample.status is SampleStatus.SKIPPED for sample in result.samples[1:]
-        )
 
     def test_a_later_sample_stops_retrying_once_an_earlier_one_fails(self, monkeypatch):
         # Sample 1 waits to retry a throttled call while sample 0 fails: its

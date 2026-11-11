@@ -60,14 +60,6 @@ MULTIPLIER_LIMIT = 5.0
 DEFAULT_MAX_WORKERS = 4
 MAX_WORKERS_LIMIT = MAX_POOL_CONNECTIONS
 
-# A sample is handed to a worker only while it is fewer than this many times
-# the number of workers past the first sample still being scored. That bounds
-# how many later samples a failure can leave scored and SKIPPED, while the
-# workers keep going past a slow sample. In a simulation of 4 workers on 2-5 s
-# judge calls with 5% at 20-40 s, 8 kept the speedup of unbounded scheduling,
-# and 1 lost 40% of it.
-SAMPLES_AHEAD_PER_WORKER = 8
-
 # One ``compute_matrix`` call scores at most this many predicted items and
 # this many reference items.
 MATRIX_BLOCK_SIZE = 10
@@ -190,12 +182,11 @@ class EvaluationConfiguration:
     ``max_workers`` is how many samples of a metric whose ``thread_safe`` is
     True are scored at the same time, each on its own thread; any other
     metric, or ``max_workers=1``, is scored one sample at a time on the
-    calling thread. Samples are handed out in input order, fewer than
-    ``SAMPLES_AHEAD_PER_WORKER * max_workers`` past the first one still being
-    scored, and the results keep the input order. Once a sample fails, no
-    sample starts and no later sample makes another attempt; the failure
-    reported is the first in input order, and every later sample is skipped,
-    also one that was already scored.
+    calling thread. Samples are handed out in input order, and the results
+    keep the input order. Once a sample fails, no sample starts and no later
+    sample makes another attempt; the failure reported is the first in input
+    order, and every later sample is skipped, also one that was already
+    scored.
     """
 
     max_attempts: int = 3
@@ -512,19 +503,16 @@ def _score_concurrently(
     """Score up to ``workers`` samples at the same time.
 
     Returns the result or the error of each scored sample by ordinal. Samples
-    are submitted in input order, and only while they are fewer than
-    ``SAMPLES_AHEAD_PER_WORKER * workers`` past the first one without an
-    outcome. A failure sets ``cutoff``: no sample is submitted after it, and a
-    later sample stops before its next attempt, though a call in flight runs
-    to its end, as a thread cannot be stopped. Every sample before the first
-    failure in input order was submitted earlier and has finished, so
+    are submitted in input order, the next one as soon as a worker is free. A
+    failure sets ``cutoff``: no sample is submitted after it, and a later
+    sample stops before its next attempt, though a call in flight runs to its
+    end, as a thread cannot be stopped. Every sample before the first failure
+    in input order was submitted earlier and has finished, so
     ``_fail_fast_results`` gives the results of scoring one sample after
     another.
     """
     outcomes: dict[int, SampleResult | Exception] = {}
     running: dict[Future, EvaluationSample] = {}
-    window = SAMPLES_AHEAD_PER_WORKER * workers
-    first_open = 0  # the lowest ordinal without an outcome
     upcoming = 0  # the ordinal of the next sample to submit
     executor = ThreadPoolExecutor(max_workers=workers)
     try:
@@ -533,7 +521,6 @@ def _score_concurrently(
                 cutoff.ordinal is None
                 and upcoming < len(samples)
                 and len(running) < workers
-                and upcoming < first_open + window
             ):
                 sample = samples[upcoming]
                 running[executor.submit(score, sample)] = sample
@@ -552,8 +539,6 @@ def _score_concurrently(
                     # such as KeyboardInterrupt, propagates, as with one worker.
                     outcomes[sample.ordinal] = error
                     cutoff.record(sample.ordinal)
-            while first_open in outcomes:
-                first_open += 1
     except BaseException:
         # Return at once: start nothing more, stop every running sample before
         # its next attempt, and let the calls in flight end on their own.

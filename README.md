@@ -587,15 +587,15 @@ keys; with `--omit-reasoning`, `reasoning` is `null`.
   semantic match metrics, which also call Bedrock; the other built-in metrics
   make no Bedrock calls. Any other metric, and `max_workers=1`, is scored one
   sample at a time on the calling thread. `batch_compute` still runs the
-  metrics one after another. The samples are handed out in input order,
-  fewer than `8 * max_workers` past the first one still being scored, and the
-  results keep the input order, so the failure reported is the first in
+  metrics one after another. The samples are handed out in input order, and
+  the results keep the input order, so the failure reported is the first in
   input order (see Fail-fast). Once a sample fails, no sample starts and no
-  later sample makes another attempt, but up to `8 * max_workers - 1` later
-  samples may already have made Bedrock calls; they are SKIPPED. A call in
-  flight cannot be stopped: after Ctrl-C, the run ends once the calls in
-  flight return. A test whose mocked client answers in call order needs
-  `max_workers=1`.
+  later sample makes another attempt. The later samples that other workers
+  scored while the failed one ran are SKIPPED too, and their Bedrock calls
+  are still billed; a sample that fails only after long retries can leave
+  many of them. A call in flight cannot be stopped: after Ctrl-C, the run
+  ends once the calls in flight return. A test whose mocked client answers in
+  call order needs `max_workers=1`.
 - **Client construction.** The engine calls `client_factory()` when a metric
   first uses the client and builds at most one client per evaluation. The default
   factory builds a `BedrockClient`. A metric that never reads the client never
@@ -1702,7 +1702,7 @@ Version 0.2.0 replaces the two computation paths of 0.1.0 with one engine. These
 43. **Python version.** The library needs Python 3.12 or later; 0.1.0 accepted 3.10. The means add with `sum()`, which Python 3.12 made compensated, so on 3.10 and 3.11 some means differed in the last digit. On an older Python, `pip install` stops with `requires a different Python`.
 44. **Output file.** The runner writes the `--output-path` envelope to a new file in the same folder and then moves it into place. The file gets mode 0600 (only its owner can read it), also when it replaces an existing file; a symbolic link at that path is replaced instead of followed; and a failed write leaves the earlier file as it was. Writing needs permission to create files in that folder, and an existing file is replaced even when it is read-only. A path in `/dev` or `/dev/fd`, such as `/dev/null`, `/dev/stdout` or a process substitution, is written in place, and so is a character device or a named pipe that the user owns and that is not itself a symbolic link. Before, the file was written in place: a new file got the mode of the umask, usually 0644, an existing file kept its mode, and a symbolic link was followed.
 45. **Judge client timeouts and retries.** The Bedrock client waits up to 600 seconds for a reply, and boto3 sends each request at most 3 times, in its standard retry mode, whatever `AWS_MAX_ATTEMPTS`, `AWS_RETRY_MODE` or the AWS config file say; the engine's attempts come on top (see Retries under [LLM Metrics](#llm-metrics)). To retry more, raise `max_attempts` of `EvaluationConfiguration`, at most 10; the runner has no option for it. Before, boto3's defaults applied: a read timeout of 60 seconds and up to 5 requests in its legacy retry mode, which those settings could change.
-46. **Concurrent scoring.** The engine scores up to 4 samples of a metric at the same time (`max_workers` of `EvaluationConfiguration`, `--max-workers` on the runner, from 1 to 32) when the metric's class sets `thread_safe = True`, as every LLM metric and the two semantic match metrics do; the other built-in metrics are scored one sample at a time, as before. The order of the samples and the fail-fast rule do not change, but up to `8 * max_workers - 1` samples after a failed one may already have made judge calls whose results are SKIPPED, and the log lines of different samples interleave. A custom `Metric` subclass keeps scoring one sample at a time until it sets `thread_safe = True`; a custom `LLMMetric` subclass that keeps state in an override sets `thread_safe = False`. A test whose mocked client answers in call order needs `max_workers=1`. The Bedrock client keeps up to 32 connections open, where botocore keeps 10. Before, the engine scored one sample at a time.
+46. **Concurrent scoring.** The engine scores up to 4 samples of a metric at the same time (`max_workers` of `EvaluationConfiguration`, `--max-workers` on the runner, from 1 to 32) when the metric's class sets `thread_safe = True`, as every LLM metric and the two semantic match metrics do; the other built-in metrics are scored one sample at a time, as before. The order of the samples and the fail-fast rule do not change, but samples after a failed one may already have made judge calls whose results are SKIPPED, and the log lines of different samples interleave. A custom `Metric` subclass keeps scoring one sample at a time until it sets `thread_safe = True`; a custom `LLMMetric` subclass that keeps state in an override sets `thread_safe = False`. A test whose mocked client answers in call order needs `max_workers=1`. The Bedrock client keeps up to 32 connections open, where botocore keeps 10. Before, the engine scored one sample at a time.
 
 ## Security
 
