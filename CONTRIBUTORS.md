@@ -1,12 +1,13 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
 <!-- SPDX-License-Identifier: MIT-0 -->
 
-## Project Lead
+## Project Manager
 
-- Istvan Bako
+- Negin Sokhandan
 
 ## Core Contributors
 
+- Istvan Bako (Lead)
 - Harrison Song
 - Christina Foley
 - Dony Ang
@@ -19,4 +20,3 @@
 - Andrei Kapustin
 - Vincil Bishop
 - Abhilash Balachandran
-- Negin Sokhandan
