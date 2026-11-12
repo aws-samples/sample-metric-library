@@ -16,6 +16,7 @@ from metric_library.core.aggregation import EvaluationStatus, SampleStatus
 from metric_library.core.base import Metric
 from metric_library.core.data import Modality, factory
 from metric_library.core.data_handler import DataHandler
+from metric_library.core.evaluation import EvaluationConfiguration
 from media_double import PngImageData
 from metric_library.core.input_policy import InputPolicy
 from metric_library.core.llm_metric import LLMMetric
@@ -90,6 +91,12 @@ def _judge_client(*responses):
     client = Mock()
     client.query.side_effect = list(responses)
     return client
+
+
+# LLM metrics are thread-safe, so the engine judges several of their samples
+# at the same time. ``_judge_client`` answers in call order, so a test that
+# checks which answer each sample got scores one sample at a time.
+SEQUENTIAL = EvaluationConfiguration(max_workers=1)
 
 
 def _message_text(judge_call):
@@ -290,6 +297,7 @@ class TestJudgeReasoningIsKept:
             "LLMReadability",
             [_text("candidate-0"), _text("candidate-1")],
             [],
+            configuration=SEQUENTIAL,
             client_factory=Mock(return_value=client),
         )
 
@@ -692,6 +700,7 @@ class TestPerExampleLLMJudging:
             references,
             context,
             prompts,
+            configuration=SEQUENTIAL,
             client_factory=client_factory,
         )
 
@@ -724,6 +733,7 @@ class TestPerExampleLLMJudging:
             "LLMReadability",
             predictions,
             [],
+            configuration=SEQUENTIAL,
             client_factory=client_factory,
         )
 

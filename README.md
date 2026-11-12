@@ -579,8 +579,25 @@ keys; with `--omit-reasoning`, `reasoning` is `null`.
   `numeric_mean`. No built-in metric sets a default. The retry settings
   (`max_attempts`, `initial_delay`, `multiplier`, `max_delay`) live on the
   same configuration.
+- **Concurrency.** `EvaluationConfiguration(max_workers=...)` sets how many
+  samples of a metric are scored at the same time, from 1 to 32; the default
+  is 4, as for the runner's `--max-workers`. Only a metric whose class sets
+  `thread_safe = True` gets the workers, which share the metric instance, its
+  client and the `sleeper`. Every LLM metric sets it, and so do the two
+  semantic match metrics, which also call Bedrock; the other built-in metrics
+  make no Bedrock calls. Any other metric, and `max_workers=1`, is scored one
+  sample at a time on the calling thread. `batch_compute` still runs the
+  metrics one after another. The samples are handed out in input order, and
+  the results keep the input order, so the failure reported is the first in
+  input order (see Fail-fast). Once a sample fails, no sample starts and no
+  later sample makes another attempt. The later samples that other workers
+  scored while the failed one ran are SKIPPED too, and their Bedrock calls
+  are still billed; a sample that fails only after long retries can leave
+  many of them. A call in flight cannot be stopped: after Ctrl-C, the run
+  ends once the calls in flight return. A test whose mocked client answers in
+  call order needs `max_workers=1`.
 - **Client construction.** The engine calls `client_factory()` when a metric
-  first uses the client, at most once per `compute_metric` call. The default
+  first uses the client and builds at most one client per evaluation. The default
   factory builds a `BedrockClient`. A metric that never reads the client never
   builds it. Every deterministic metric except the two semantic match metrics,
   which call Bedrock for embeddings, runs without AWS access. A
@@ -903,6 +920,17 @@ Rules for authors:
 - `compute` takes one sample, not the dataset. A metric written for the old
   `compute(predictions, references, *args)` signature instantiates but fails
   its first sample with `'EvaluationSample' object is not iterable`.
+- `thread_safe = True` lets the engine score up to `max_workers` samples at
+  the same time (4 by default; `--max-workers` on the runner), calling
+  `compute` of one instance from several threads. Set it only when `compute`
+  keeps per-sample values in local variables, guards any change to shared
+  state, such as a counter or a cache, with a lock, and gives each sample a
+  score that does not depend on the other samples. Without it the metric is
+  scored one sample at a time. Threads help only when `compute` waits on
+  Bedrock or on code that releases the GIL, such as image decoding; for
+  pure-Python `compute` they only add overhead. A value other than `True` or
+  `False` fails the metric before scoring. A subclass of `LLMMetric` inherits
+  `True`; one that keeps state in an override sets `False`.
 - With the `labels` or `list` matcher and the `prf` aggregator, the engine
   calls `compute` once for each candidate pair of items:
   `sample.prediction` and `sample.reference` each hold one item, and the
@@ -1161,6 +1189,7 @@ With `--aggregation-methods weighted_mean --weight-key weight` on the records
 | `--thresholds` | no | Comma-separated pair-score thresholds in (0, 1] for every `prf` entry of `--aggregation-methods`: a pair with a score of a threshold or more is a true positive. The thresholds must be unique. The first threshold gives the score; with two or more, the result gains `by_threshold`. Omitted: 0.5. Rejected without a `prf` entry. |
 | `--model-id` | no | Bedrock model ID or inference profile of the LLM judges, for example `global.anthropic.claude-sonnet-4-6`. It must support forced tool use (Anthropic Claude 3 and later, Amazon Nova). A geographic inference profile (`us.`, `eu.`, `au.`, `jp.`) must match the region. Omitted: `BEDROCK_MODEL_ID`, then `global.anthropic.claude-sonnet-4-6`. The semantic match metrics keep their embedding model, `amazon.titan-embed-text-v2:0`. |
 | `--aws-profile` | no | AWS profile for every Bedrock call of the run: the LLM judges and the semantic match metrics. It wins over `AWS_PROFILE` and over credentials in the environment. Omitted: the standard boto3 credential chain. |
+| `--max-workers` | no | Number of samples of each metric scored at the same time, from 1 to 32, so at most this many Bedrock calls are in flight; the metrics run one after another, and a metric that does not set `thread_safe = True` is scored one sample at a time. Lower it when Bedrock throttles the run (see Concurrency under [LLM Metrics](#llm-metrics)). Omitted: 4. |
 
 ### Runner inputs
 
@@ -1439,6 +1468,9 @@ threshold checks report `prf requires --matcher labels or list`,
 `--class-key requires --matcher list`, `--value-key requires --matcher list`,
 `--thresholds must be comma-separated numbers, got '0.5,x'` or
 `thresholds must be greater than 0.0 and at most 1.0`.
+A `--max-workers` value outside 1 to 32 reports
+`max_workers must be at least 1` or `max_workers must be at most 32`; a value
+that is not an integer is an argument-parser error.
 Argument-parser errors occur before the runner envelope is created and use
 standard `argparse` behavior. Abbreviated option names, for example
 `--aggregation-method` for `--aggregation-methods`, are argument-parser errors
@@ -1464,6 +1496,7 @@ too.
 - **Cost**: ~$0.018 per 1000 examples per metric
 - **Use case**: Quality assessment, nuanced evaluation
 - **Retries**: The engine retries transient Bedrock errors. The defaults are 3 attempts with delays of 1 s and 2 s. Each attempt is one Bedrock request, which boto3 sends at most 3 times in the standard retry mode that the client sets, whatever `AWS_MAX_ATTEMPTS`, `AWS_RETRY_MODE` or the AWS config file say, so one judge call makes at most 9 requests with the default attempts. The client waits up to 600 seconds for a reply: a judge reply has at most 8,192 output tokens, which Claude Sonnet 4.6 wrote in 47 seconds, and the 3,600 seconds that AWS advises for Claude 4 models are for far longer outputs. Read timeouts are retried too, so a connection that stalls can hold one judge call for up to 30 minutes per engine attempt, 90 minutes with the 3 default attempts. A throttled run takes longer, and it can complete where it failed before.
+- **Concurrency**: The engine scores 4 samples of an LLM metric at the same time by default (`max_workers`, `--max-workers`), so a metric with many samples runs up to about 4 times faster. Each worker has one judge call in flight: 4 workers at 2 to 5 seconds per call send about 50 to 120 requests per minute. Bedrock limits the requests and tokens per minute of each model, and a sample that is still throttled after its retries stops its metric, so lower `--max-workers` when the logs show `bedrock:ThrottlingException`.
 
 ### Client construction
 
@@ -1535,6 +1568,7 @@ adds `compute_matrix`.
 - `compute(sample, client) -> float | SampleOutput` - Abstract; every metric implements it. Returns one finite real for one `EvaluationSample`, or a `SampleOutput` that carries the score and a `details` mapping that the sample result keeps. With an item matcher, the sample holds one predicted item and one reference item, and the score must be from 0.0 to 1.0. Deterministic metrics ignore `client`
 - `compute_matrix(sample, predicted, references, client) -> list[list[float]]` - `LLMBatchMetric` only. Scores each pair of the predicted items and the reference items of one class in one judge call, with the rubric of the metric and the prompt and contexts of `sample`: one row per predicted item, one score per reference item. With the `labels` or `list` matcher, the engine calls it for a class with two or more items on one side, in blocks of at most 10 by 10 items, and checks the shape and the range of the scores
 - `default_aggregation_method` - Class attribute of type `AggregationMethod | None`, default `None`. The engine uses it as the aggregator when the caller sets none; `None` means `numeric_mean`. A default of `prf` also needs an item matcher from the caller
+- `thread_safe` - Class attribute of type `bool`, default `False`. `True` lets the engine score up to `max_workers` samples of the metric at the same time; `False` scores one sample at a time. `LLMMetric` and the two semantic match metrics set `True`
 - `validate_evaluation_inputs(predictions, references, context, prompts)` - Check input presence and alignment against the metric's `reference_policy`, `prompt_policy`, `context_policy` (defaults REQUIRED / OMIT / OMIT); the engine calls it once, before it builds the client
 - `get_info()` - Get metric information
 
@@ -1559,6 +1593,7 @@ dataclass, exported from `metric_library`.
 - `thresholds` - Tuple of pair-score thresholds for `prf`, each greater than `0.0` and at most `1.0`, unique; `None` (the default) means `(0.5,)`. The first threshold gives the score
 - `matcher` - The `Matcher` that gives the items of each value; default `WholeValue()`. `LabelSet()` and `ListItems(...)` require the `prf` aggregator, and `prf` requires one of them
 - `max_attempts`, `initial_delay`, `multiplier`, `max_delay` - The retry settings (defaults `3`, `1.0`, `2.0`, `30.0`)
+- `max_workers` - How many samples of a thread-safe metric are scored at the same time, an integer from `1` to `32`; default `4` (see Concurrency under [Evaluating a metric](#evaluating-a-metric))
 
 ### Matchers
 
@@ -1667,6 +1702,7 @@ Version 0.2.0 replaces the two computation paths of 0.1.0 with one engine. These
 43. **Python version.** The library needs Python 3.12 or later; 0.1.0 accepted 3.10. The means add with `sum()`, which Python 3.12 made compensated, so on 3.10 and 3.11 some means differed in the last digit. On an older Python, `pip install` stops with `requires a different Python`.
 44. **Output file.** The runner writes the `--output-path` envelope to a new file in the same folder and then moves it into place. The file gets mode 0600 (only its owner can read it), also when it replaces an existing file; a symbolic link at that path is replaced instead of followed; and a failed write leaves the earlier file as it was. Writing needs permission to create files in that folder, and an existing file is replaced even when it is read-only. A path in `/dev` or `/dev/fd`, such as `/dev/null`, `/dev/stdout` or a process substitution, is written in place, and so is a character device or a named pipe that the user owns and that is not itself a symbolic link. Before, the file was written in place: a new file got the mode of the umask, usually 0644, an existing file kept its mode, and a symbolic link was followed.
 45. **Judge client timeouts and retries.** The Bedrock client waits up to 600 seconds for a reply, and boto3 sends each request at most 3 times, in its standard retry mode, whatever `AWS_MAX_ATTEMPTS`, `AWS_RETRY_MODE` or the AWS config file say; the engine's attempts come on top (see Retries under [LLM Metrics](#llm-metrics)). To retry more, raise `max_attempts` of `EvaluationConfiguration`, at most 10; the runner has no option for it. Before, boto3's defaults applied: a read timeout of 60 seconds and up to 5 requests in its legacy retry mode, which those settings could change.
+46. **Concurrent scoring.** The engine scores up to 4 samples of a metric at the same time (`max_workers` of `EvaluationConfiguration`, `--max-workers` on the runner, from 1 to 32) when the metric's class sets `thread_safe = True`, as every LLM metric and the two semantic match metrics do; the other built-in metrics are scored one sample at a time, as before. The order of the samples and the fail-fast rule do not change, but samples after a failed one may already have made judge calls whose results are SKIPPED, and the log lines of different samples interleave. A custom `Metric` subclass keeps scoring one sample at a time until it sets `thread_safe = True`; a custom `LLMMetric` subclass that keeps state in an override sets `thread_safe = False`. A test whose mocked client answers in call order needs `max_workers=1`. The Bedrock client keeps up to 32 connections open, where botocore keeps 10. Before, the engine scored one sample at a time.
 
 ## Security
 

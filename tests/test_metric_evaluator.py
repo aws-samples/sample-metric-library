@@ -14,7 +14,10 @@ from the injected client mock.
 
 import json
 import logging
+import threading
 import time
+from contextlib import contextmanager
+from dataclasses import replace
 from unittest.mock import Mock, call
 
 import pytest
@@ -51,7 +54,13 @@ from metric_library import (
 )
 from metric_library.core.base import Metric
 from metric_library.core.data import Modality, factory
-from metric_library.core.evaluation import MAX_ATTEMPTS_LIMIT, MULTIPLIER_LIMIT
+from metric_library.core import evaluation
+from metric_library.core.evaluation import (
+    DEFAULT_MAX_WORKERS,
+    MAX_ATTEMPTS_LIMIT,
+    MAX_WORKERS_LIMIT,
+    MULTIPLIER_LIMIT,
+)
 from metric_library.core.input_policy import InputPolicy
 from metric_library.core.llm_metric import LLMMetric
 
@@ -208,6 +217,13 @@ def _scored_ids(client):
     return [scoring.args[0] for scoring in client.next_outcome.call_args_list]
 
 
+# LLM metrics are thread-safe, so the engine judges several of their samples
+# at the same time. ``_fake_client`` answers in call order, so a test that
+# checks which answer each sample got, or the order of the calls, scores one
+# sample at a time.
+SEQUENTIAL = EvaluationConfiguration(max_workers=1)
+
+
 def _run_builtin_case(side_effects, sleeper, *, configuration=None):
     """Run ``LLMCorrectness`` on one pair with the judge outcomes in ``side_effects``."""
     if configuration is None:
@@ -251,6 +267,7 @@ class TestRetryConfiguration:
         assert configuration.initial_delay == 1.0
         assert configuration.multiplier == 2.0
         assert configuration.max_delay == 30.0
+        assert configuration.max_workers == DEFAULT_MAX_WORKERS == 4
 
     @pytest.mark.parametrize(
         ("overrides", "error_type", "message"),
@@ -278,6 +295,30 @@ class TestRetryConfiguration:
                 ValueError,
                 "max_attempts must be at most",
                 id="max-attempts-above-limit",
+            ),
+            pytest.param(
+                {"max_workers": True},
+                TypeError,
+                "max_workers must be an integer",
+                id="boolean-max-workers",
+            ),
+            pytest.param(
+                {"max_workers": 2.5},
+                TypeError,
+                "max_workers must be an integer",
+                id="non-integer-max-workers",
+            ),
+            pytest.param(
+                {"max_workers": 0},
+                ValueError,
+                "max_workers must be at least 1",
+                id="zero-max-workers",
+            ),
+            pytest.param(
+                {"max_workers": MAX_WORKERS_LIMIT + 1},
+                ValueError,
+                f"max_workers must be at most {MAX_WORKERS_LIMIT}",
+                id="max-workers-above-limit",
             ),
             pytest.param(
                 {"initial_delay": None},
@@ -886,6 +927,7 @@ class TestDetailedLLMCorrectnessEvaluation:
             references,
             context,
             prompts,
+            configuration=SEQUENTIAL,
             client_factory=client_factory,
         )
 
@@ -930,6 +972,7 @@ class TestDetailedLLMCorrectnessEvaluation:
             references,
             context,
             prompts,
+            configuration=SEQUENTIAL,
             client_factory=client_factory,
             sleeper=sleeper,
         )
@@ -963,6 +1006,7 @@ class TestDetailedLLMCorrectnessEvaluation:
             references,
             context,
             prompts,
+            configuration=SEQUENTIAL,
             client_factory=client_factory,
             sleeper=sleeper,
         )
@@ -1008,6 +1052,7 @@ class TestDetailedLLMCorrectnessEvaluation:
             references,
             context,
             prompts,
+            configuration=SEQUENTIAL,
             client_factory=client_factory,
             sleeper=sleeper,
         )
@@ -1043,7 +1088,7 @@ class TestDetailedLLMCorrectnessEvaluation:
             references,
             context,
             prompts,
-            configuration=EvaluationConfiguration(max_attempts=1),
+            configuration=EvaluationConfiguration(max_attempts=1, max_workers=1),
             client_factory=client_factory,
             sleeper=sleeper,
         )
@@ -1109,6 +1154,7 @@ class TestLLMMetricsThroughTheEngine:
             references,
             context,
             prompts,
+            configuration=SEQUENTIAL,
             client_factory=client_factory,
         )
 
@@ -1269,7 +1315,7 @@ class TestAggregationMethodDispatch:
         result = MetricRegistry.compute_metric(
             "LLMCorrectness",
             *_llm_inputs(2),
-            configuration=configuration,
+            configuration=replace(configuration, max_workers=1),
             client_factory=client_factory,
         )
 
@@ -1346,6 +1392,7 @@ class TestAggregationMethodDispatch:
             max_attempts=2,
             aggregation_method="weighted_mean",
             weights=(1.0, 3.0, 100.0),
+            max_workers=1,
         )
         sleeper = Mock()
 
@@ -1930,6 +1977,7 @@ class TestSampleResultReuse:
         result = MetricRegistry.compute_metric(
             "LLMCorrectness",
             *_llm_inputs(3),
+            configuration=SEQUENTIAL,
             client_factory=client_factory,
         )
 
@@ -2026,6 +2074,27 @@ class TestClientConstruction:
         assert events == []
         client_factory.assert_called_once_with()
 
+    def test_a_transient_client_construction_error_is_retried(self, monkeypatch):
+        _register(monkeypatch, SequenceMetric)
+        _, client = _sequence_client([0.5])
+        client_factory = Mock(
+            side_effect=[EndpointConnectionError(endpoint_url=_TEST_ENDPOINT), client]
+        )
+        sleeper = _RecordingSleeper()
+
+        result = MetricRegistry.compute_metric(
+            "SequenceMetric",
+            [_text("a")],
+            [],
+            client_factory=client_factory,
+            sleeper=sleeper,
+        )
+
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 0.5
+        assert client_factory.call_count == 2
+        assert sleeper.calls == [1.0]
+
     def test_failing_client_factory_leaves_a_deterministic_metric_untouched(self):
         client_factory = Mock(side_effect=ProfileNotFound(profile="missing-profile"))
 
@@ -2053,3 +2122,553 @@ class TestClientConstruction:
         judge = MetricRegistry.compute_metric("LLMCorrectness", *_llm_inputs(1))
         assert judge.status is EvaluationStatus.FAILED
         assert judge.samples[0].error == "live AWS is forbidden in tests"
+
+
+class ProbeMetric(Metric):
+    """Fixture: score each sample through the injected client's ``score``.
+
+    A test gives ``score`` its behaviour for each sample, such as a delay, a
+    barrier or an error; the metric itself keeps no state.
+    """
+
+    reference_policy = InputPolicy.OPTIONAL
+    thread_safe = True
+
+    def compute(self, sample, client):
+        return client.score(sample)
+
+
+class UnflaggedProbeMetric(ProbeMetric):
+    """Fixture: ``ProbeMetric`` that does not declare itself thread-safe."""
+
+    thread_safe = False
+
+
+def _probe_client(score):
+    """Build a factory and a client whose ``score`` runs ``score(sample)``."""
+    client = Mock(spec=["score"])
+    client.score.side_effect = score
+    return Mock(return_value=client), client
+
+
+class _InFlight:
+    """Record which samples started, on which threads, and the most at once."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._running = 0
+        self.peak = 0
+        self.started = []
+        self.threads = set()
+
+    @contextmanager
+    def scoring(self, sample):
+        with self._lock:
+            self._running += 1
+            self.peak = max(self.peak, self._running)
+            self.started.append(sample.ordinal)
+            self.threads.add(threading.get_ident())
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._running -= 1
+
+
+class TestConcurrentScoring:
+    """``max_workers`` samples are scored at the same time.
+
+    The samples are handed out in input order and the results keep that
+    order. The fail-fast shape is the one of a single worker: the first
+    failure in input order is reported and every later sample is skipped.
+    """
+
+    @pytest.mark.parametrize(
+        ("configuration", "workers"),
+        [
+            pytest.param(None, DEFAULT_MAX_WORKERS, id="default"),
+            pytest.param(EvaluationConfiguration(max_workers=2), 2, id="two"),
+            pytest.param(EvaluationConfiguration(max_workers=8), 8, id="eight"),
+        ],
+    )
+    def test_max_workers_samples_are_scored_at_the_same_time(
+        self, monkeypatch, configuration, workers
+    ):
+        # Each call waits until ``workers`` calls are in flight; with fewer at
+        # the same time, the barrier breaks after its timeout and fails them.
+        _register(monkeypatch, ProbeMetric)
+        in_flight = _InFlight()
+        barrier = threading.Barrier(workers, timeout=10)
+
+        def score(sample):
+            with in_flight.scoring(sample):
+                barrier.wait()
+            return 1.0
+
+        client_factory, _ = _probe_client(score)
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts([f"value-{index}" for index in range(2 * workers)]),
+            [],
+            configuration=configuration,
+            client_factory=client_factory,
+        )
+
+        assert result.status is EvaluationStatus.COMPLETED
+        assert in_flight.peak == workers
+        assert sorted(in_flight.started) == list(range(2 * workers))
+        assert threading.get_ident() not in in_flight.threads
+
+    @pytest.mark.parametrize(
+        ("metric_class", "workers"),
+        [
+            pytest.param(ProbeMetric, 1, id="max-workers-one"),
+            pytest.param(UnflaggedProbeMetric, 8, id="not-thread-safe"),
+        ],
+    )
+    def test_samples_are_scored_one_at_a_time_on_the_calling_thread(
+        self, monkeypatch, metric_class, workers
+    ):
+        _register(monkeypatch, metric_class)
+        in_flight = _InFlight()
+
+        def score(sample):
+            with in_flight.scoring(sample):
+                time.sleep(0.001)
+            return 1.0
+
+        client_factory, _ = _probe_client(score)
+
+        result = MetricRegistry.compute_metric(
+            metric_class.__name__,
+            _texts(["a", "b", "c", "d"]),
+            [],
+            configuration=EvaluationConfiguration(max_workers=workers),
+            client_factory=client_factory,
+        )
+
+        assert result.status is EvaluationStatus.COMPLETED
+        assert in_flight.peak == 1
+        assert in_flight.started == [0, 1, 2, 3]
+        assert in_flight.threads == {threading.get_ident()}
+
+    def test_results_keep_the_input_order_when_samples_finish_out_of_order(
+        self, monkeypatch
+    ):
+        # An earlier sample takes longer, so later samples finish first.
+        _register(monkeypatch, ProbeMetric)
+        count = 8
+
+        def score(sample):
+            time.sleep(0.002 * (count - sample.ordinal))
+            return SampleOutput(sample.ordinal / 10, {"ordinal": sample.ordinal})
+
+        values = _texts([f"value-{index}" for index in range(count)])
+        concurrent_factory, _ = _probe_client(score)
+        sequential_factory, _ = _probe_client(score)
+
+        concurrent = MetricRegistry.compute_metric(
+            "ProbeMetric", values, [], client_factory=concurrent_factory
+        )
+        sequential = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            values,
+            [],
+            configuration=SEQUENTIAL,
+            client_factory=sequential_factory,
+        )
+
+        assert [sample.ordinal for sample in concurrent.samples] == list(range(count))
+        assert [sample.score for sample in concurrent.samples] == [
+            index / 10 for index in range(count)
+        ]
+        assert [sample.details for sample in concurrent.samples] == [
+            {"ordinal": index} for index in range(count)
+        ]
+        assert concurrent.samples == sequential.samples
+        assert concurrent.aggregate == sequential.aggregate
+
+    def test_the_first_failure_in_input_order_is_reported_and_later_results_dropped(
+        self, monkeypatch
+    ):
+        # Sample 3 fails first in time, sample 1 fails after it, and sample 2
+        # completes: sample 1 is the failure reported, and samples 2 and 3 are
+        # skipped although both were scored.
+        _register(monkeypatch, ProbeMetric)
+        sample_3_failed = threading.Event()
+
+        def score(sample):
+            if sample.ordinal == 3:
+                sample_3_failed.set()
+                raise ValueError("sample 3 failed")
+            if sample.ordinal == 1:
+                sample_3_failed.wait(timeout=10)
+                raise ValueError("sample 1 failed")
+            return 1.0
+
+        client_factory, client = _probe_client(score)
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts(["a", "b", "c", "d"]),
+            [],
+            client_factory=client_factory,
+        )
+
+        assert sample_3_failed.is_set()
+        assert len(client.score.call_args_list) == 4
+        assert tuple(sample.status for sample in result.samples) == (
+            SampleStatus.COMPLETED,
+            SampleStatus.FAILED,
+            SampleStatus.SKIPPED,
+            SampleStatus.SKIPPED,
+        )
+        assert result.samples[0].score == 1.0
+        assert result.samples[1].error == "sample 1 failed"
+        for sample in result.samples[2:]:
+            assert sample.score is None
+            assert sample.error is None
+        assert result.status is EvaluationStatus.FAILED
+        assert result.score is None
+        assert result.aggregate.succeeded_count == 1
+        assert result.aggregate.failed_count == 1
+        assert result.aggregate.skipped_count == 2
+
+    def test_no_sample_starts_after_a_failure(self, monkeypatch):
+        # Two workers: sample 0 is still running when sample 1 fails, so the
+        # engine records the failure before any other sample can start.
+        _register(monkeypatch, ProbeMetric)
+        in_flight = _InFlight()
+
+        def score(sample):
+            with in_flight.scoring(sample):
+                if sample.ordinal == 1:
+                    raise ValueError("sample 1 failed")
+                time.sleep(0.2)
+            return 1.0
+
+        client_factory, _ = _probe_client(score)
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts(["a", "b", "c", "d", "e", "f"]),
+            [],
+            configuration=EvaluationConfiguration(max_workers=2),
+            client_factory=client_factory,
+        )
+
+        assert sorted(in_flight.started) == [0, 1]
+        assert tuple(sample.status for sample in result.samples) == (
+            SampleStatus.COMPLETED,
+            SampleStatus.FAILED,
+            *(SampleStatus.SKIPPED,) * 4,
+        )
+
+    def test_a_base_exception_from_a_worker_propagates(self, monkeypatch):
+        class AbortEvaluation(BaseException):
+            pass
+
+        _register(monkeypatch, ProbeMetric)
+
+        def score(sample):
+            if sample.ordinal == 2:
+                raise AbortEvaluation("stop")
+            return 1.0
+
+        client_factory, _ = _probe_client(score)
+
+        with pytest.raises(AbortEvaluation, match="stop"):
+            MetricRegistry.compute_metric(
+                "ProbeMetric",
+                _texts(["a", "b", "c", "d"]),
+                [],
+                client_factory=client_factory,
+            )
+
+    def test_a_later_sample_stops_retrying_once_an_earlier_one_fails(self, monkeypatch):
+        # Sample 1 waits to retry a throttled call while sample 0 fails: its
+        # result will be SKIPPED, so it makes no second attempt.
+        _register(monkeypatch, ProbeMetric)
+        retrying = threading.Event()
+
+        def score(sample):
+            if sample.ordinal == 0:
+                retrying.wait(timeout=10)
+                raise ValueError("sample 0 failed")
+            raise _client_error("ThrottlingException")
+
+        def sleeper(delay):
+            retrying.set()
+            time.sleep(0.2)
+
+        client_factory, client = _probe_client(score)
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts(["a", "b"]),
+            [],
+            configuration=EvaluationConfiguration(max_workers=2),
+            client_factory=client_factory,
+            sleeper=sleeper,
+        )
+
+        scored = sorted(
+            scoring.args[0].ordinal for scoring in client.score.call_args_list
+        )
+        assert scored == [0, 1]
+        assert tuple(sample.status for sample in result.samples) == (
+            SampleStatus.FAILED,
+            SampleStatus.SKIPPED,
+        )
+
+    def test_a_sample_throttled_after_an_earlier_failure_does_not_wait_to_retry(
+        self, monkeypatch
+    ):
+        # Sample 1 is inside its first call when sample 0 fails, and is then
+        # throttled: it is SKIPPED without waiting for a retry.
+        _register(monkeypatch, ProbeMetric)
+        calling = threading.Event()
+        failed = threading.Event()
+
+        def score(sample):
+            if sample.ordinal == 0:
+                calling.wait(timeout=10)
+                failed.set()
+                raise ValueError("sample 0 failed")
+            calling.set()
+            failed.wait(timeout=10)
+            time.sleep(0.2)  # the engine records the failure meanwhile
+            raise _client_error("ThrottlingException")
+
+        client_factory, _ = _probe_client(score)
+        sleeper = _RecordingSleeper()
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts(["a", "b"]),
+            [],
+            configuration=EvaluationConfiguration(max_workers=2),
+            client_factory=client_factory,
+            sleeper=sleeper,
+        )
+
+        assert sleeper.calls == []
+        assert tuple(sample.status for sample in result.samples) == (
+            SampleStatus.FAILED,
+            SampleStatus.SKIPPED,
+        )
+
+    def test_an_abort_stops_the_other_samples_before_their_next_attempt(
+        self, monkeypatch
+    ):
+        # Sample 1 waits to retry when sample 0 aborts the evaluation. The abort
+        # returns at once, and sample 1 then ends without another attempt.
+        class AbortEvaluation(BaseException):
+            pass
+
+        _register(monkeypatch, ProbeMetric)
+        retrying = threading.Event()
+        release = threading.Event()
+        waiting_threads = []
+
+        def score(sample):
+            if sample.ordinal == 0:
+                retrying.wait(timeout=10)
+                raise AbortEvaluation("stop")
+            raise _client_error("ThrottlingException")
+
+        def sleeper(delay):
+            waiting_threads.append(threading.current_thread())
+            retrying.set()
+            release.wait(timeout=10)
+
+        client_factory, client = _probe_client(score)
+
+        with pytest.raises(AbortEvaluation, match="stop"):
+            MetricRegistry.compute_metric(
+                "ProbeMetric",
+                _texts(["a", "b"]),
+                [],
+                configuration=EvaluationConfiguration(max_workers=2),
+                client_factory=client_factory,
+                sleeper=sleeper,
+            )
+        release.set()
+        waiting_threads[0].join(timeout=10)
+
+        assert not waiting_threads[0].is_alive()
+        scored = [scoring.args[0].ordinal for scoring in client.score.call_args_list]
+        assert scored.count(1) == 1
+
+    def test_aggregation_runs_once_on_the_calling_thread(self, monkeypatch):
+        _register(monkeypatch, ProbeMetric)
+        aggregate_samples = evaluation.aggregate_samples
+        aggregations = []
+
+        def recording_aggregate(results, spec):
+            aggregations.append((threading.get_ident(), len(results)))
+            return aggregate_samples(results, spec)
+
+        monkeypatch.setattr(evaluation, "aggregate_samples", recording_aggregate)
+        client_factory, _ = _probe_client(lambda sample: 1.0)
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts([f"value-{index}" for index in range(8)]),
+            [],
+            client_factory=client_factory,
+        )
+
+        assert result.status is EvaluationStatus.COMPLETED
+        assert aggregations == [(threading.get_ident(), 8)]
+
+    def test_samples_that_first_read_the_client_together_build_one_client(
+        self, monkeypatch
+    ):
+        # The factory is slow, so every worker reads the client while it is
+        # being built and waits for that client instead of building its own.
+        _register(monkeypatch, ProbeMetric)
+        _, client = _probe_client(lambda sample: 1.0)
+
+        def build_client():
+            time.sleep(0.05)
+            return client
+
+        client_factory = Mock(side_effect=build_client)
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts([f"value-{index}" for index in range(8)]),
+            [],
+            configuration=EvaluationConfiguration(max_workers=8),
+            client_factory=client_factory,
+        )
+
+        assert result.status is EvaluationStatus.COMPLETED
+        client_factory.assert_called_once_with()
+
+    def test_a_client_factory_error_is_reported_on_the_first_sample(self, monkeypatch):
+        # The factory is slow, so the other workers read the client while it
+        # fails. The error is not transient: they get it without another call.
+        _register(monkeypatch, ProbeMetric)
+
+        def build_client():
+            time.sleep(0.05)
+            raise ProfileNotFound(profile="missing-profile")
+
+        client_factory = Mock(side_effect=build_client)
+        sleeper = _RecordingSleeper()
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts(["a", "b", "c", "d"]),
+            [],
+            client_factory=client_factory,
+            sleeper=sleeper,
+        )
+
+        assert result.status is EvaluationStatus.FAILED
+        assert result.samples[0].status is SampleStatus.FAILED
+        assert (
+            result.samples[0].error
+            == "The config profile (missing-profile) could not be found"
+        )
+        assert all(
+            sample.status is SampleStatus.SKIPPED for sample in result.samples[1:]
+        )
+        client_factory.assert_called_once_with()
+        assert sleeper.calls == []
+
+    def test_an_llm_metric_judges_its_samples_in_parallel_with_isolated_calls(self):
+        # The judge answers by the candidate it reads, not by call order, and
+        # each call waits until four calls are in flight.
+        count = 2 * DEFAULT_MAX_WORKERS
+        barrier = threading.Barrier(DEFAULT_MAX_WORKERS, timeout=10)
+
+        def judge(**request):
+            texts = [block.get("text", "") for block in request["additional_content"]]
+            (candidate,) = [text for text in texts if text.startswith("candidate-")]
+            barrier.wait()
+            return _judge(int(candidate.removeprefix("candidate-")) / 10)
+
+        client_factory, client = _fake_client(judge)
+
+        result = MetricRegistry.compute_metric(
+            "LLMCorrectness", *_llm_inputs(count), client_factory=client_factory
+        )
+
+        client_factory.assert_called_once_with()
+        assert len(client.query.call_args_list) == count
+        assert result.status is EvaluationStatus.COMPLETED
+        assert [sample.score for sample in result.samples] == [
+            index / 10 for index in range(count)
+        ]
+        assert result.score == sum(index / 10 for index in range(count)) / count
+        for index, sample in enumerate(result.samples):
+            assert sample.details == {"reasoning": "valid"}, index
+
+
+class TestThreadSafeFlag:
+    """The ``thread_safe`` defaults and their validation."""
+
+    def test_metric_defaults_to_false_and_llm_metrics_inherit_true(self):
+        class CustomMetric(Metric):
+            def compute(self, sample, client):
+                return 1.0
+
+        class CustomJudge(LLMMetric):
+            def rubric(self):
+                return "Score the candidate."
+
+        assert Metric.thread_safe is False
+        assert CustomMetric.thread_safe is False
+        assert LLMMetric.thread_safe is True
+        assert CustomJudge.thread_safe is True
+
+    def test_only_built_in_metrics_that_call_bedrock_are_thread_safe(self):
+        # Threads overlap the Bedrock calls of the LLM and semantic match
+        # metrics; the other built-in metrics are scored one sample at a time.
+        built_in = {
+            metric_class.__name__: metric_class
+            for metric_class in MetricRegistry.metrics.values()
+            if metric_class.__module__.startswith("metric_library.")
+        }
+        llm_metrics = {
+            name
+            for name, metric_class in built_in.items()
+            if issubclass(metric_class, LLMMetric)
+        }
+
+        # Guards the check against an empty or partial discovery.
+        assert len(built_in) >= 46
+        assert len(llm_metrics) >= 26
+        assert {
+            name for name, metric_class in built_in.items() if metric_class.thread_safe
+        } == llm_metrics | {"ItemSemanticMatch", "RawSemanticMatch"}
+
+    @pytest.mark.parametrize("value", ["yes", 1, None], ids=["string", "int", "none"])
+    def test_a_value_that_is_not_a_bool_fails_before_scoring(self, monkeypatch, value):
+        class MisflaggedMetric(ProbeMetric):
+            thread_safe = value
+
+        _register(monkeypatch, MisflaggedMetric)
+        client_factory = Mock(side_effect=AssertionError("client must not run"))
+        message = "thread_safe must be True or False for MisflaggedMetric"
+
+        with pytest.raises(TypeError, match=message):
+            MetricRegistry.compute_metric(
+                "MisflaggedMetric",
+                _texts(["a", "b"]),
+                [],
+                client_factory=client_factory,
+            )
+        results = MetricRegistry.batch_compute(
+            ["MisflaggedMetric"],
+            _texts(["a", "b"]),
+            [],
+            client_factory=client_factory,
+        )
+
+        assert results["MisflaggedMetric"] == {"error": message}
+        client_factory.assert_not_called()

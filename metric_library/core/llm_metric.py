@@ -130,6 +130,11 @@ class LLMMetric(Metric):
     prediction_multiplicity: Multiplicity = Multiplicity.COMPOSITE
     reference_multiplicity: Multiplicity = Multiplicity.COMPOSITE
 
+    # ``compute`` and ``compute_matrix`` build a new request for each call and
+    # change no state, so the engine may judge several samples at the same
+    # time. A subclass that keeps state in an override sets it to False.
+    thread_safe: bool = True
+
     def __init_subclass__(cls, **kwargs):
         """Accept ``get_evaluation_prompt``, the old name of ``rubric``, for now.
 
