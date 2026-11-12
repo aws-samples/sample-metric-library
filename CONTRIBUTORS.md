@@ -8,15 +8,15 @@
 ## Core Contributors
 
 - Istvan Bako (Lead)
-- Harrison Song
 - Christina Foley
 - Dony Ang
+- Harrison Song
 
 ## Contributors
 
 - Peter Yu
 - Wes Morishita
 - Tony Jiang
-- Andrei Kapustin
 - Vincil Bishop
 - Abhilash Balachandran
+- Andrei Kapustin
