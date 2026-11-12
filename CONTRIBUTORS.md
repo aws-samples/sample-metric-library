@@ -1,14 +1,22 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
 <!-- SPDX-License-Identifier: MIT-0 -->
 
-## Founding Authors
-- Istvan Bako
+## Project Manager
+
+- Negin Sokhandan
+
+## Core Contributors
+
+- Istvan Bako (Lead)
+- Christina Foley
 - Dony Ang
 - Harrison Song
-- Wes Morishita
+
+## Contributors
+
 - Peter Yu
-- Abhilash Balachandran
-- Andrei Kapustin
-- Negin Sokhandan
+- Wes Morishita
 - Tony Jiang
 - Vincil Bishop
+- Abhilash Balachandran
+- Andrei Kapustin
