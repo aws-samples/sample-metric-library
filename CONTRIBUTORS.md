@@ -1,14 +1,22 @@
 <!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
 <!-- SPDX-License-Identifier: MIT-0 -->
 
-## Founding Authors
+## Project Lead
+
 - Istvan Bako
-- Dony Ang
+
+## Core Contributors
+
 - Harrison Song
-- Wes Morishita
+- Christina Foley
+- Dony Ang
+
+## Contributors
+
 - Peter Yu
-- Abhilash Balachandran
-- Andrei Kapustin
-- Negin Sokhandan
+- Wes Morishita
 - Tony Jiang
+- Andrei Kapustin
 - Vincil Bishop
+- Abhilash Balachandran
+- Negin Sokhandan
