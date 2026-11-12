@@ -33,13 +33,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from metric_library.core.aggregation import (
+    AggregationResult,
     EvaluationStatus,
     SampleStatus,
 )
 from metric_library.core.bedrock_client import BedrockClient
 from metric_library.core.data_handler import DataHandler
 from metric_library.core.evaluation import (
+    DEFAULT_MAX_CONSECUTIVE_FAILURES,
     DEFAULT_MAX_WORKERS,
+    DEFAULT_MIN_COVERAGE,
     MAX_WORKERS_LIMIT,
     EvaluationConfiguration,
     MetricEvaluationResult,
@@ -296,13 +299,15 @@ def _validate_auxiliary_cardinality(predictions, prompts, context):
 def _envelope_value(
     result: MetricEvaluationResult | MetricError,
     record_ids: list[str],
+    on_sample_error: str,
 ) -> float | dict | MetricError:
     """Map one engine result to the envelope value.
 
     A completed result maps to its aggregate ``values`` object when the
     aggregator provides one (the ``prf`` aggregator), else to its finite
-    float score. A failed sample is reported as a MetricError under the record
-    identifier at its ordinal.
+    float score. A failed result is a MetricError that names its first failed
+    sample by the record identifier at its ordinal; with ``continue``, the
+    coverage and the failure counts come first.
     """
     if isinstance(result, MetricError):
         return result
@@ -310,12 +315,46 @@ def _envelope_value(
         failed_sample = next(
             sample for sample in result.samples if sample.status is SampleStatus.FAILED
         )
+        failure = f"sample {record_ids[failed_sample.ordinal]}: {failed_sample.error}"
+        if on_sample_error == "stop":
+            return MetricError(failure)
+        aggregate = result.aggregate
         return MetricError(
-            f"sample {record_ids[failed_sample.ordinal]}: {failed_sample.error}"
+            f"coverage {_coverage_text(aggregate)} is below "
+            f"{aggregate.spec.min_coverage:g}: {_failure_counts(aggregate)}; {failure}"
         )
     if result.aggregate.values is not None:
         return result.aggregate.values
     return result.score
+
+
+def _coverage_entry(aggregate: AggregationResult) -> dict:
+    """The ``data.coverage`` entry of one metric."""
+    return {
+        "succeeded": aggregate.succeeded_count,
+        "failed": aggregate.failed_count,
+        "skipped": aggregate.skipped_count,
+        "coverage": aggregate.coverage,
+    }
+
+
+def _coverage_text(aggregate: AggregationResult) -> str:
+    """The coverage rounded down to 3 decimals.
+
+    Rounding down keeps a coverage below 1 from reading as 1, and one below
+    ``min_coverage`` from reading as reaching it.
+    """
+    thousandths = aggregate.succeeded_count * 1000 // aggregate.total_count
+    return f"{thousandths / 1000:g}"
+
+
+def _failure_counts(aggregate: AggregationResult) -> str:
+    """For example ``12 of 1000 samples failed and 6 were skipped``."""
+    text = f"{aggregate.failed_count} of {aggregate.total_count} samples failed"
+    skipped = aggregate.skipped_count
+    if skipped:
+        text += f" and {skipped} {'was' if skipped == 1 else 'were'} skipped"
+    return text
 
 
 def _sample_entries(
@@ -346,6 +385,7 @@ def _sample_entries(
             "status": sample.status.value,
             "score": sample.score,
             "error": sample.error,
+            "error_category": sample.error_category,
             "matches": matches,
             "item_scores": details.get("item_scores"),
             "reasoning": None if omit_reasoning else details.get("reasoning"),
@@ -781,6 +821,29 @@ def main():
             f"it when Bedrock throttles the run. Omitted: {DEFAULT_MAX_WORKERS}."
         ),
     )
+    parser.add_argument(
+        "--on-sample-error",
+        choices=("continue", "stop"),
+        default="continue",
+        help=(
+            "What a sample that still fails after its retries does. continue: "
+            "the other samples are scored, and a metric whose completed samples "
+            "reach --min-coverage gets the score of those samples; the metric "
+            "stops early on an error that every later sample would hit too, "
+            f"such as expired credentials, or after "
+            f"{DEFAULT_MAX_CONSECUTIVE_FAILURES} failed samples in a row. stop: "
+            "the first failed sample fails its metric. Omitted: continue."
+        ),
+    )
+    parser.add_argument(
+        "--min-coverage",
+        type=float,
+        help=(
+            "With --on-sample-error continue, the share of the samples of each "
+            "metric that must complete for the metric to get a score, greater "
+            f"than 0 and at most 1. Omitted: {DEFAULT_MIN_COVERAGE}."
+        ),
+    )
     args = parser.parse_args()
 
     if args.list_metrics:
@@ -923,6 +986,11 @@ def main():
         ):
             if value is not None and "list" not in matchers:
                 raise ValueError(f"{option} requires --matcher list")
+        if args.min_coverage is not None and args.on_sample_error == "stop":
+            raise ValueError("--min-coverage requires --on-sample-error continue")
+        min_coverage = (
+            DEFAULT_MIN_COVERAGE if args.min_coverage is None else args.min_coverage
+        )
         thresholds = None
         if args.thresholds is not None:
             thresholds = _thresholds(args.thresholds)
@@ -938,7 +1006,7 @@ def main():
         }
         # One configuration per distinct (method, matcher) entry, in first-seen
         # order. An entry without a method keeps the metric's default, and
-        # every entry carries --max-workers.
+        # every entry carries --max-workers and the sample error options.
         entries = list(zip(methods, matchers))
         configurations: dict[tuple, EvaluationConfiguration] = {}
         for method, matcher in dict.fromkeys(entries):
@@ -949,6 +1017,8 @@ def main():
                 thresholds=thresholds if method == "prf" else None,
                 matcher=matcher_objects[matcher],
                 max_workers=args.max_workers,
+                on_sample_error=args.on_sample_error,
+                min_coverage=min_coverage,
             )
         meta["metrics"] = {
             name: _metric_meta(name, method, matcher, args, thresholds)
@@ -982,19 +1052,31 @@ def main():
             for name, value in results.items()
             if isinstance(value, MetricEvaluationResult)
         }
-        results = {
-            name: _envelope_value(value, record_ids) for name, value in results.items()
+        coverage = {
+            name: _coverage_entry(value.aggregate)
+            for name, value in results.items()
+            if isinstance(value, MetricEvaluationResult)
         }
-        metric_errors = [
-            f"{metric_name}: {result['error']}"
-            for metric_name, result in results.items()
-            if isinstance(result, MetricError)
-        ]
-        success_count = len(results) - len(metric_errors)
+        # One error per metric without a score, and one per metric whose
+        # score leaves out samples that did not complete.
+        values = {}
+        metric_errors = []
+        for name, result in results.items():
+            values[name] = _envelope_value(result, record_ids, args.on_sample_error)
+            if isinstance(values[name], MetricError):
+                metric_errors.append(f"{name}: {values[name]['error']}")
+            elif result.aggregate.coverage < 1.0:
+                metric_errors.append(
+                    f"{name}: {_failure_counts(result.aggregate)} "
+                    f"(coverage {_coverage_text(result.aggregate)})"
+                )
+        scored_count = sum(
+            not isinstance(value, MetricError) for value in values.values()
+        )
         if not metric_errors:
             status = "completed"
             exit_code = 0
-        elif success_count:
+        elif scored_count:
             status = "partial"
             exit_code = 2
         else:
@@ -1004,7 +1086,7 @@ def main():
         output = {
             "ok": status == "completed",
             "status": status,
-            "data": {"results": results, "samples": samples},
+            "data": {"results": values, "coverage": coverage, "samples": samples},
             "errors": metric_errors,
             "meta": meta,
         }

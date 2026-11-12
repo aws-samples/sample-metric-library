@@ -21,6 +21,7 @@ from metric_library import (
 )
 from metric_library.core.aggregation import numeric_mean, prf
 from metric_library.core.base import Metric
+from metric_library.core.evaluation import DEFAULT_MIN_COVERAGE
 from metric_library.core.data import Modality
 from metric_library.core.data.text_data import TextData
 from media_double import images
@@ -565,7 +566,9 @@ class TestValueLocks:
         assert [sample.score for sample in result.samples] == [2.0, 3.0]
         assert result.aggregate.method == "numeric_mean"
         assert result.score == 2.5
-        assert result.aggregate == numeric_mean(result.samples)
+        assert result.aggregate == numeric_mean(
+            result.samples, min_coverage=DEFAULT_MIN_COVERAGE
+        )
         mae = _compute_metric("MeanAbsoluteError", predictions, references)
         mse = _compute_metric("MeanSquaredError", predictions, references)
         assert mae.score == 2.0
@@ -700,7 +703,9 @@ class TestLabelsMatcherPrf:
         result = self._compute(predictions, references)
 
         assert result.aggregate.method == "prf"
-        assert result.aggregate == prf(result.samples)
+        assert result.aggregate == prf(
+            result.samples, min_coverage=DEFAULT_MIN_COVERAGE
+        )
         assert result.score == result.aggregate.values["f1"]
         rebuilt = MetricEvaluationResult(
             result.metric_name, result.samples, result.aggregate
@@ -985,6 +990,7 @@ class TestItemMatchers:
             configuration=EvaluationConfiguration(
                 aggregation_method="prf",
                 matcher=ListItems(class_key="type", value_key="text"),
+                on_sample_error="stop",
             ),
         )
 

@@ -24,12 +24,14 @@ from metric_library.core.aggregation import (
     numeric_mean,
     prf,
     quantile,
+    validate_fail_fast_sequence,
     weighted_mean,
 )
 from metric_library.core.base import Metric
 from metric_library.core.data.text_data import TextData
 from media_double import images
 from metric_library.core.evaluation import (
+    DEFAULT_MIN_COVERAGE,
     EvaluationConfiguration,
     MetricEvaluationResult,
 )
@@ -65,7 +67,9 @@ class TestRmseDefinition:
         assert [sample.score for sample in result.samples] == [2.0, 3.0]
         assert result.aggregate.method == "numeric_mean"
         assert result.score == 2.5
-        assert result.aggregate == numeric_mean(result.samples)
+        assert result.aggregate == numeric_mean(
+            result.samples, min_coverage=DEFAULT_MIN_COVERAGE
+        )
 
     def test_rmse_is_the_square_root_of_mse_per_sample_not_in_aggregate(self):
         rmse = self._compute("RootMeanSquaredError", self.PREDICTIONS, self.REFERENCES)
@@ -339,6 +343,44 @@ class TestSampleResultContracts:
         with pytest.raises(exception, match=message):
             SampleResult("0", 0, **kwargs)
 
+    def test_a_failed_sample_keeps_its_error_category(self):
+        result = SampleResult(
+            "0",
+            0,
+            SampleStatus.FAILED,
+            error="throttled",
+            error_category="bedrock:ThrottlingException",
+        )
+
+        assert result.error_category == "bedrock:ThrottlingException"
+        assert _failed(0).error_category is None
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            pytest.param(
+                {"status": SampleStatus.COMPLETED, "score": 1.0},
+                "only failed samples can contain an error category",
+                id="completed",
+            ),
+            pytest.param(
+                {"status": SampleStatus.SKIPPED},
+                "only failed samples can contain an error category",
+                id="skipped",
+            ),
+        ],
+    )
+    def test_only_a_failed_sample_has_an_error_category(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            SampleResult("0", 0, error_category="exception:ValueError", **kwargs)
+
+    @pytest.mark.parametrize("category", ["", "  ", 1])
+    def test_an_error_category_must_be_a_non_empty_string(self, category):
+        with pytest.raises(ValueError, match="error_category must be a non-empty"):
+            SampleResult(
+                "0", 0, SampleStatus.FAILED, error="failed", error_category=category
+            )
+
 
 class TestSampleOutput:
     """Validate the score and the details that ``compute`` may return."""
@@ -482,7 +524,7 @@ class TestMatches:
 
 
 class TestNumericMean:
-    """Prove explicit denominator, coverage, and stop-on-failure accounting."""
+    """Prove explicit denominator, coverage, and failure accounting."""
 
     def test_all_success_uses_exact_ordered_builtin_mean(self):
         scores = [1.0, 1e-16, 1e-16]
@@ -516,17 +558,41 @@ class TestNumericMean:
         with pytest.raises(ValueError, match="at least one sample result"):
             numeric_mean(())
 
-    def test_skips_require_a_prior_failure(self):
-        with pytest.raises(ValueError, match="prior failure"):
-            numeric_mean((_skipped(0), _failed(1)))
+    @pytest.mark.parametrize(
+        "results",
+        [
+            pytest.param((_skipped(0), _failed(1)), id="skipped-before-failed"),
+            pytest.param((_failed(0), _failed(1)), id="two-failed"),
+            pytest.param(
+                (_completed(0, 0.2), _failed(1), _completed(2, 0.8)),
+                id="completed-after-failed",
+            ),
+        ],
+    )
+    def test_failed_and_skipped_samples_may_come_in_any_order(self, results):
+        result = numeric_mean(results)
 
-    def test_only_one_failure_is_allowed(self):
-        with pytest.raises(ValueError, match="only one failed result"):
-            numeric_mean((_failed(0), _failed(1)))
+        assert result.status is EvaluationStatus.FAILED
+        assert result.score is None
 
-    def test_completed_results_cannot_follow_a_failure(self):
-        with pytest.raises(ValueError, match="completed results after failure"):
-            numeric_mean((_completed(0, 0.2), _failed(1), _completed(2, 0.8)))
+    def test_min_coverage_scores_only_the_completed_samples(self):
+        results = (_completed(0, 0.2), _failed(1), _completed(2, 0.8), _skipped(3))
+
+        result = numeric_mean(results, min_coverage=0.5)
+
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 0.5
+        assert result.spec.min_coverage == 0.5
+        _assert_counts(result, total=4, succeeded=2, failed=1, skipped=1)
+
+    def test_coverage_below_min_coverage_fails_without_score(self):
+        results = (_completed(0, 0.2), _failed(1), _completed(2, 0.8), _skipped(3))
+
+        result = numeric_mean(results, min_coverage=0.75)
+
+        assert result.status is EvaluationStatus.FAILED
+        assert result.score is None
+        _assert_counts(result, total=4, succeeded=2, failed=1, skipped=1)
 
     def test_results_must_have_contiguous_ordinals_and_unique_ids(self):
         with pytest.raises(ValueError, match="contiguous ordinal"):
@@ -548,21 +614,44 @@ class TestNumericMean:
             numeric_mean((duplicate_id, second_duplicate))
 
 
+class TestValidateFailFastSequence:
+    """The exported check of the stop-mode shape, which no aggregator calls."""
+
+    @pytest.mark.parametrize(
+        ("results", "message"),
+        [
+            ((_skipped(0), _failed(1)), "prior failure"),
+            ((_failed(0), _failed(1)), "only one failed result"),
+            (
+                (_completed(0, 0.2), _failed(1), _completed(2, 0.8)),
+                "completed results after failure",
+            ),
+        ],
+    )
+    def test_a_sequence_that_does_not_stop_at_its_failure_is_rejected(
+        self, results, message
+    ):
+        with pytest.raises(ValueError, match=message):
+            validate_fail_fast_sequence(results)
+
+    def test_completed_then_one_failed_then_skipped_is_accepted(self):
+        validate_fail_fast_sequence((_completed(0, 0.2), _failed(1), _skipped(2)))
+
+
 class TestAggregationResultContracts:
     """Reject aggregate states the public aggregator can never produce."""
 
     @pytest.mark.parametrize(
-        ("succeeded_count", "failed_count", "skipped_count"),
+        ("succeeded_count", "failed_count", "min_coverage"),
         [
-            (2, 0, 1),
-            (0, 2, 1),
-            (3, 0, 0),
+            pytest.param(3, 0, 1.0, id="all-completed"),
+            pytest.param(2, 1, 0.5, id="coverage-reached"),
         ],
     )
-    def test_failed_status_requires_exactly_one_failed_sample(
-        self, succeeded_count, failed_count, skipped_count
+    def test_failed_status_requires_coverage_below_min_coverage(
+        self, succeeded_count, failed_count, min_coverage
     ):
-        with pytest.raises(ValueError, match="exactly one failed sample"):
+        with pytest.raises(ValueError, match="coverage below min_coverage"):
             AggregationResult(
                 method="numeric_mean",
                 status=EvaluationStatus.FAILED,
@@ -570,24 +659,51 @@ class TestAggregationResultContracts:
                 total_count=3,
                 succeeded_count=succeeded_count,
                 failed_count=failed_count,
-                skipped_count=skipped_count,
+                skipped_count=0,
                 denominator=succeeded_count,
                 coverage=succeeded_count / 3,
+                spec=AggregationSpec(min_coverage=min_coverage),
             )
 
-    def test_completed_status_requires_every_sample_to_succeed(self):
-        with pytest.raises(ValueError, match="every sample to succeed"):
-            AggregationResult(
-                method="numeric_mean",
-                status=EvaluationStatus.COMPLETED,
-                score=0.5,
-                total_count=2,
-                succeeded_count=1,
-                failed_count=1,
-                skipped_count=0,
-                denominator=1,
-                coverage=0.5,
-            )
+    def test_failed_status_accepts_several_failed_and_skipped_samples(self):
+        result = AggregationResult(
+            method="numeric_mean",
+            status=EvaluationStatus.FAILED,
+            score=None,
+            total_count=3,
+            succeeded_count=0,
+            failed_count=2,
+            skipped_count=1,
+            denominator=0,
+            coverage=0.0,
+        )
+
+        assert result.failed_count == 2
+
+    @staticmethod
+    def _half_completed(min_coverage):
+        return AggregationResult(
+            method="numeric_mean",
+            status=EvaluationStatus.COMPLETED,
+            score=0.5,
+            total_count=2,
+            succeeded_count=1,
+            failed_count=1,
+            skipped_count=0,
+            denominator=1,
+            coverage=0.5,
+            spec=AggregationSpec(min_coverage=min_coverage),
+        )
+
+    @pytest.mark.parametrize("min_coverage", [1.0, 0.75])
+    def test_completed_status_requires_coverage_of_at_least_min_coverage(
+        self, min_coverage
+    ):
+        with pytest.raises(ValueError, match="at least min_coverage"):
+            self._half_completed(min_coverage)
+
+    def test_completed_status_accepts_coverage_equal_to_min_coverage(self):
+        assert self._half_completed(0.5).status is EvaluationStatus.COMPLETED
 
     def test_failed_status_cannot_contain_a_score(self):
         with pytest.raises(ValueError, match="cannot contain a score"):
@@ -734,6 +850,29 @@ class TestAggregationSpec:
         with pytest.raises((TypeError, ValueError)):
             AggregationSpec(method="quantile", quantile=value)
 
+    def test_min_coverage_defaults_to_every_sample_and_is_a_float(self):
+        assert AggregationSpec().min_coverage == 1.0
+        spec = AggregationSpec(min_coverage=Fraction(1, 2))
+
+        assert spec.min_coverage == 0.5
+        assert type(spec.min_coverage) is float
+
+    @pytest.mark.parametrize(
+        ("value", "exception"),
+        [
+            (True, TypeError),
+            ("0.9", TypeError),
+            (0.0, ValueError),
+            (-0.5, ValueError),
+            (1.01, ValueError),
+            (float("nan"), ValueError),
+            (float("inf"), ValueError),
+        ],
+    )
+    def test_min_coverage_is_greater_than_zero_and_at_most_one(self, value, exception):
+        with pytest.raises(exception, match="min_coverage must be"):
+            AggregationSpec(min_coverage=value)
+
     def test_prf_constructs_without_parameters(self):
         spec = AggregationSpec(method="prf")
 
@@ -854,6 +993,15 @@ class TestWeightedMean:
         assert result.denominator == 4.0
         assert result.coverage == 0.5
 
+    def test_min_coverage_weighs_only_the_completed_samples(self):
+        results = (_completed(0, 0.2), _failed(1), _completed(2, 0.8), _skipped(3))
+
+        result = weighted_mean(results, (1.0, 100.0, 3.0, 100.0), min_coverage=0.5)
+
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == (0.2 * 1.0 + 0.8 * 3.0) / 4.0
+        assert result.denominator == 4.0
+
     def test_first_sample_failure_has_float_zero_denominator(self):
         result = weighted_mean((_failed(0), _skipped(1)), (1.0, 2.0))
 
@@ -926,6 +1074,26 @@ class TestMedianAndQuantile:
     def test_quantile_singleton_returns_the_value(self):
         for q in (0.0, 0.25, 0.5, 1.0):
             assert quantile((_completed(0, 0.7),), q).score == 0.7
+
+    def test_min_coverage_takes_the_median_and_quantile_of_the_completed_scores(
+        self,
+    ):
+        results = (
+            _completed(0, 0.9),
+            _failed(1),
+            _completed(2, 0.1),
+            _completed(3, 0.5),
+        )
+
+        middle = median(results, min_coverage=0.75)
+        top = quantile(results, 1.0, min_coverage=0.75)
+
+        assert (middle.status, middle.score, middle.denominator) == (
+            EvaluationStatus.COMPLETED,
+            0.5,
+            3,
+        )
+        assert (top.status, top.score) == (EvaluationStatus.COMPLETED, 0.9)
 
 
 class TestPrfAggregators:
@@ -1008,6 +1176,23 @@ class TestPrfAggregators:
         )
         assert result.denominator == baseline.denominator
         assert result.coverage == baseline.coverage
+
+    def test_min_coverage_counts_only_the_completed_samples(self):
+        samples = (
+            _match_sample(0, 1.0, {"a": TP}),
+            _failed(1),
+            _match_sample(2, 0.0, {"c": FP, "d": FN}),
+        )
+
+        result = prf(samples, min_coverage=0.5)
+
+        assert result.status is EvaluationStatus.COMPLETED
+        per_class = result.values["per_class"]
+        assert list(per_class) == ["a", "c", "d"]
+        # The failed sample is neither a true negative nor any other count.
+        assert [counts["tn"] for counts in per_class.values()] == [1, 1, 1]
+        assert result.score == pytest.approx(1 / 3)
+        _assert_counts(result, total=3, succeeded=2, failed=1, skipped=0)
 
     def test_completed_sample_without_matches_is_rejected(self):
         samples = (_completed(0, 1.0), _completed(1, 0.0))

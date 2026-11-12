@@ -43,8 +43,9 @@ class SampleStatus(str, Enum):
 class EvaluationStatus(str, Enum):
     """Status for one metric's detailed evaluation.
 
-    Evaluation stops at the first sample that still fails after retries, so an
-    aggregate is either complete or failed; there is no partial aggregate.
+    An aggregate is COMPLETED when the share of its samples that completed is
+    at least ``min_coverage`` of its spec, and its score comes from those
+    samples only; otherwise it is FAILED and has no score.
     """
 
     COMPLETED = "completed"
@@ -111,8 +112,10 @@ class SampleResult:
     """One numeric sample outcome consumed by an aggregator.
 
     Skipped samples carry no payload: a sample is skipped only when evaluation
-    stops after an earlier failure, which the status already says. ``matches``
+    stops early after a failure, which the status already says. ``matches``
     holds one ``Matches`` for each class when an item matcher scored the sample.
+    ``error_category`` is the kind of error of a failed sample, such as
+    ``bedrock:ThrottlingException``, without its message.
     """
 
     sample_id: str
@@ -122,6 +125,7 @@ class SampleResult:
     error: str | None = None
     details: dict | None = None
     matches: dict | None = None
+    error_category: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.sample_id, str) or not self.sample_id.strip():
@@ -132,6 +136,14 @@ class SampleResult:
             raise ValueError("ordinal must be non-negative")
         if not isinstance(self.status, SampleStatus):
             raise TypeError("status must be a SampleStatus")
+        if self.error_category is not None:
+            if self.status is not SampleStatus.FAILED:
+                raise ValueError("only failed samples can contain an error category")
+            if (
+                not isinstance(self.error_category, str)
+                or not self.error_category.strip()
+            ):
+                raise ValueError("error_category must be a non-empty string")
 
         if self.status is SampleStatus.COMPLETED:
             normalized_score = _validate_score(self.score)
@@ -162,16 +174,24 @@ class SampleResult:
 
 @dataclass(frozen=True)
 class AggregationSpec:
-    """Closed configuration for the supported numeric aggregators."""
+    """Closed configuration for the supported numeric aggregators.
+
+    ``min_coverage`` is the lowest share of completed samples of a COMPLETED
+    aggregate; the default, 1.0, needs every sample.
+    """
 
     method: AggregationMethod = "numeric_mean"
     weights: tuple[float, ...] | None = None
     quantile: float | None = None
     thresholds: tuple[float, ...] | None = None
+    min_coverage: float = 1.0
 
     def __post_init__(self) -> None:
         if self.method not in _METHODS:
             raise ValueError(f"unknown aggregation method: {self.method!r}")
+        object.__setattr__(
+            self, "min_coverage", _validate_min_coverage(self.min_coverage)
+        )
 
         normalized_weights = None
         if self.weights is not None:
@@ -305,16 +325,16 @@ class AggregationResult:
 
         if self.status is EvaluationStatus.COMPLETED:
             object.__setattr__(self, "score", _validate_score(self.score))
-            if self.succeeded_count != self.total_count:
+            if normalized_coverage < self.spec.min_coverage:
                 raise ValueError(
-                    "completed aggregation requires every sample to succeed"
+                    "completed aggregation requires coverage of at least min_coverage"
                 )
             return
 
         if self.score is not None:
             raise ValueError("failed aggregation cannot contain a score")
-        if self.failed_count != 1:
-            raise ValueError("failed aggregation requires exactly one failed sample")
+        if normalized_coverage >= self.spec.min_coverage:
+            raise ValueError("failed aggregation requires coverage below min_coverage")
 
     def _validate_denominator(self) -> None:
         if self.method == "weighted_mean":
@@ -338,35 +358,52 @@ class AggregationResult:
             raise ValueError("denominator must equal succeeded_count")
 
 
-def numeric_mean(results: Sequence[SampleResult]) -> AggregationResult:
+def numeric_mean(
+    results: Sequence[SampleResult], *, min_coverage: float = 1.0
+) -> AggregationResult:
     """Return the ordered arithmetic mean of successful sample scores."""
-    return _aggregate_numeric(results, AggregationSpec())
+    return _aggregate_numeric(results, AggregationSpec(min_coverage=min_coverage))
 
 
 def weighted_mean(
     results: Sequence[SampleResult],
     weights: Sequence[float],
+    *,
+    min_coverage: float = 1.0,
 ) -> AggregationResult:
     """Return an ordinal-aligned positive-weight mean."""
     return _aggregate_numeric(
         results,
-        AggregationSpec(method="weighted_mean", weights=tuple(weights)),
+        AggregationSpec(
+            method="weighted_mean", weights=tuple(weights), min_coverage=min_coverage
+        ),
     )
 
 
-def median(results: Sequence[SampleResult]) -> AggregationResult:
+def median(
+    results: Sequence[SampleResult], *, min_coverage: float = 1.0
+) -> AggregationResult:
     """Return the median of successful sample scores."""
-    return _aggregate_numeric(results, AggregationSpec(method="median"))
+    return _aggregate_numeric(
+        results, AggregationSpec(method="median", min_coverage=min_coverage)
+    )
 
 
-def quantile(results: Sequence[SampleResult], q: float) -> AggregationResult:
+def quantile(
+    results: Sequence[SampleResult], q: float, *, min_coverage: float = 1.0
+) -> AggregationResult:
     """Return an inclusive type-7 linear quantile of successful scores."""
-    return _aggregate_numeric(results, AggregationSpec(method="quantile", quantile=q))
+    return _aggregate_numeric(
+        results,
+        AggregationSpec(method="quantile", quantile=q, min_coverage=min_coverage),
+    )
 
 
 def prf(
     results: Sequence[SampleResult],
     thresholds: Sequence[float] | None = None,
+    *,
+    min_coverage: float = 1.0,
 ) -> AggregationResult:
     """Return the class means of precision, recall and F1 from the match records.
 
@@ -375,7 +412,10 @@ def prf(
     """
     if thresholds is not None:
         thresholds = tuple(thresholds)
-    return _aggregate_prf(results, AggregationSpec(method="prf", thresholds=thresholds))
+    return _aggregate_prf(
+        results,
+        AggregationSpec(method="prf", thresholds=thresholds, min_coverage=min_coverage),
+    )
 
 
 def aggregate(
@@ -395,7 +435,6 @@ def _aggregate_numeric(
     if not samples:
         raise ValueError("at least one sample result is required")
     _validate_sample_sequence(samples)
-    validate_fail_fast_sequence(samples)
 
     total_count = len(samples)
     spec.validate_for(total_count)
@@ -409,7 +448,7 @@ def _aggregate_numeric(
 
     status = (
         EvaluationStatus.COMPLETED
-        if succeeded_count == total_count
+        if coverage >= spec.min_coverage
         else EvaluationStatus.FAILED
     )
     candidate_score, denominator = _reduce_successful(completed, spec)
@@ -474,7 +513,6 @@ def _aggregate_prf(
     if not samples:
         raise ValueError("at least one sample result is required")
     _validate_sample_sequence(samples)
-    validate_fail_fast_sequence(samples)
 
     total_count = len(samples)
     spec.validate_for(total_count)
@@ -488,7 +526,7 @@ def _aggregate_prf(
 
     status = (
         EvaluationStatus.COMPLETED
-        if succeeded_count == total_count
+        if coverage >= spec.min_coverage
         else EvaluationStatus.FAILED
     )
     values = (
@@ -625,6 +663,16 @@ def _validate_weight(weight: object) -> float:
         raise ValueError("weights must be finite")
     if normalized <= 0.0:
         raise ValueError("weights must be strictly positive")
+    return normalized
+
+
+def _validate_min_coverage(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError("min_coverage must be a real number")
+    normalized = float(value)
+    # The comparison is False for NaN, so it rejects NaN too.
+    if not 0.0 < normalized <= 1.0:
+        raise ValueError("min_coverage must be greater than 0.0 and at most 1.0")
     return normalized
 
 

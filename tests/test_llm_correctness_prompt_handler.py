@@ -51,6 +51,8 @@ def _forbid_live_aws(monkeypatch):
 # checks which answer each sample got, or the order of the calls, scores one
 # sample at a time.
 SEQUENTIAL = EvaluationConfiguration(max_workers=1)
+# A test of the fail-fast shape: the first failed sample stops the metric.
+SEQUENTIAL_STOP = EvaluationConfiguration(max_workers=1, on_sample_error="stop")
 
 
 # The default judge role ``LLMMetric.role`` returns. Every request sends it as
@@ -558,9 +560,10 @@ class TestInputRejection:
 class TestJudgeFailures:
     """Invalid responses and provider errors end each path at the failing call.
 
-    The engine records the failing sample with the validator's or provider's
-    own message, skips every later sample and reports a failed aggregate with
-    no score; ``compute`` raises the error itself.
+    With ``on_sample_error="stop"``, the engine records the failing sample with
+    the validator's or provider's own message, skips every later sample and
+    reports a failed aggregate with no score; ``compute`` raises the error
+    itself.
     """
 
     def test_blank_reasoning_on_second_of_three_fails_that_sample_and_skips_the_rest(
@@ -582,7 +585,7 @@ class TestJudgeFailures:
             references,
             context,
             prompts,
-            configuration=SEQUENTIAL,
+            configuration=SEQUENTIAL_STOP,
             client_factory=factory,
         )
 
@@ -616,7 +619,7 @@ class TestJudgeFailures:
             references,
             context,
             prompts,
-            configuration=SEQUENTIAL,
+            configuration=SEQUENTIAL_STOP,
             client_factory=factory,
         )
 

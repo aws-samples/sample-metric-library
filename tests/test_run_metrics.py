@@ -78,6 +78,7 @@ SAMPLE_ENTRY_KEYS = {
     "status",
     "score",
     "error",
+    "error_category",
     "matches",
     "item_scores",
     "reasoning",
@@ -356,8 +357,12 @@ class TestEndToEnd:
         )
         assert result.returncode == 0, result.stderr
         output = _full_output(result, output_path)
-        assert set(output["data"]) == {"results", "samples"}
+        assert set(output["data"]) == {"results", "coverage", "samples"}
         assert set(output["data"]["samples"]) == set(output["data"]["results"])
+        assert output["data"]["coverage"] == {
+            name: {"succeeded": 3, "failed": 0, "skipped": 0, "coverage": 1.0}
+            for name in ("Accuracy", "TextExactMatch")
+        }
         for entries in output["data"]["samples"].values():
             assert all(set(entry) == SAMPLE_ENTRY_KEYS for entry in entries)
             # The default identifier is the 1-based record position.
@@ -369,6 +374,7 @@ class TestEndToEnd:
                 "status": "completed",
                 "score": 1.0,
                 "error": None,
+                "error_category": None,
                 "matches": None,
                 "item_scores": None,
                 "reasoning": None,
@@ -378,6 +384,7 @@ class TestEndToEnd:
                 "status": "completed",
                 "score": 1.0,
                 "error": None,
+                "error_category": None,
                 "matches": None,
                 "item_scores": None,
                 "reasoning": None,
@@ -387,6 +394,7 @@ class TestEndToEnd:
                 "status": "completed",
                 "score": 0.0,
                 "error": None,
+                "error_category": None,
                 "matches": None,
                 "item_scores": None,
                 "reasoning": None,
@@ -1013,7 +1021,8 @@ class TestEndToEnd:
 
         The engine rejects the value at the first sample, the runner maps the
         FAILED result to ``{"error": "sample 1: ..."}`` under the 1-based record
-        position, and a dict is no longer valid data even when it carries an
+        position (with ``--on-sample-error stop``, which names the failed sample
+        alone), and a dict is no longer valid data even when it carries an
         ``error`` key.
         """
         custom_dir = tmp_path / "custom"
@@ -1046,6 +1055,8 @@ class TestEndToEnd:
             "pred",
             "--ground-truth-key",
             "gold",
+            "--on-sample-error",
+            "stop",
         ]
 
         partial_path = tmp_path / "partial.json"
@@ -1080,6 +1091,7 @@ class TestEndToEnd:
                 "status": "failed",
                 "score": None,
                 "error": "score must be finite",
+                "error_category": "exception:ValueError",
                 "matches": None,
                 "item_scores": None,
                 "reasoning": None,
@@ -1089,6 +1101,7 @@ class TestEndToEnd:
                 "status": "skipped",
                 "score": None,
                 "error": None,
+                "error_category": None,
                 "matches": None,
                 "item_scores": None,
                 "reasoning": None,
@@ -1098,6 +1111,7 @@ class TestEndToEnd:
                 "status": "skipped",
                 "score": None,
                 "error": None,
+                "error_category": None,
                 "matches": None,
                 "item_scores": None,
                 "reasoning": None,
@@ -1246,10 +1260,14 @@ class TestEndToEnd:
         output = _full_output(result, output_path)
         assert output["ok"] is False
         assert output["status"] == "failed"
-        assert output["data"]["results"] == {
-            "ReturnsNaN": {"error": "sample r-a: score must be finite"}
-        }
-        assert output["errors"] == ["ReturnsNaN: sample r-a: score must be finite"]
+        # One failure of three puts coverage 0.9 out of reach, so the metric
+        # stops there.
+        message = (
+            "coverage 0 is below 0.9: 1 of 3 samples failed and 2 were skipped; "
+            "sample r-a: score must be finite"
+        )
+        assert output["data"]["results"] == {"ReturnsNaN": {"error": message}}
+        assert output["errors"] == [f"ReturnsNaN: {message}"]
         # The failed sample keeps its identifier; the skipped ones keep theirs.
         assert output["data"]["samples"]["ReturnsNaN"] == [
             {
@@ -1257,6 +1275,7 @@ class TestEndToEnd:
                 "status": "failed",
                 "score": None,
                 "error": "score must be finite",
+                "error_category": "exception:ValueError",
                 "matches": None,
                 "item_scores": None,
                 "reasoning": None,
@@ -1266,6 +1285,7 @@ class TestEndToEnd:
                 "status": "skipped",
                 "score": None,
                 "error": None,
+                "error_category": None,
                 "matches": None,
                 "item_scores": None,
                 "reasoning": None,
@@ -1275,6 +1295,7 @@ class TestEndToEnd:
                 "status": "skipped",
                 "score": None,
                 "error": None,
+                "error_category": None,
                 "matches": None,
                 "item_scores": None,
                 "reasoning": None,
@@ -1453,7 +1474,9 @@ class TestEndToEnd:
     def test_unknown_aws_profile_fails_only_the_metric_that_uses_the_client(
         self, tmp_path, monkeypatch
     ):
-        """A bad profile fails the judge at its first sample; Accuracy still scores."""
+        """A bad profile fails the judge at its first sample and stops it there,
+        as every later sample would fail the same way; Accuracy still scores.
+        """
         monkeypatch.setenv("AWS_PROFILE", "no-such-profile")
         monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "missing-config"))
         monkeypatch.setenv(
@@ -1476,6 +1499,10 @@ class TestEndToEnd:
             "Accuracy,LLMCorrectness",
             "--prompt-key",
             "q",
+            # One worker, so the second sample has not started when the first
+            # one stops the metric.
+            "--max-workers",
+            "1",
         )
 
         assert result.returncode == 2, result.stderr
@@ -1483,10 +1510,13 @@ class TestEndToEnd:
         assert output["status"] == "partial"
         assert output["data"]["results"]["Accuracy"] == 0.5
         assert output["data"]["results"]["LLMCorrectness"] == {
-            "error": "sample 1: The config profile (no-such-profile) could not be found"
+            "error": "coverage 0 is below 0.9: 1 of 2 samples failed and 1 was "
+            "skipped; sample 1: The config profile (no-such-profile) could not be "
+            "found"
         }
         entries = output["data"]["samples"]["LLMCorrectness"]
         assert [entry["status"] for entry in entries] == ["failed", "skipped"]
+        assert entries[0]["error_category"] == "exception:ProfileNotFound"
 
 
 class TestAggregationMethodsOption:
@@ -3351,9 +3381,8 @@ class TestAwsOptions:
         result, output = aws_run("ClientProbe", *options)
 
         assert result.returncode == 1, result.stderr
-        assert output["data"]["results"]["ClientProbe"] == {
-            "error": f"sample 1: {expected}"
-        }
+        error = output["data"]["results"]["ClientProbe"]["error"]
+        assert error.endswith(f"; sample 1: {expected}"), error
 
     def test_aws_profile_reaches_the_semantic_embedding_client(self, aws_run):
         """Ignoring the option would give 'Unable to locate credentials' instead."""
@@ -3656,14 +3685,14 @@ class TestStdoutOption:
         printed = json.loads(result.stdout)
         assert set(printed) == STDOUT_KEYS
         assert printed["output_path"] == str(output_path)
-        assert set(printed["data"]) == {"results"}
+        assert set(printed["data"]) == {"results", "coverage"}
         assert printed["data"]["results"] == {
             "Accuracy": pytest.approx(2 / 3),
             "TextExactMatch": pytest.approx(2 / 3),
         }
         full = json.loads(output_path.read_text())
         assert set(full) == ENVELOPE_KEYS
-        assert set(full["data"]) == {"results", "samples"}
+        assert set(full["data"]) == {"results", "coverage", "samples"}
         assert len(full["data"]["samples"]["Accuracy"]) == 3
         assert printed == _summary_of(full, output_path)
 
@@ -4763,4 +4792,139 @@ class TestMaxWorkersOption:
         assert result.stdout == ""
         assert "usage:" in result.stderr
         assert "argument --max-workers: invalid int value: 'four'" in result.stderr
+        assert not output_path.exists()
+
+
+class TestOnSampleErrorOption:
+    """``--on-sample-error`` and ``--min-coverage`` set what a failed sample does."""
+
+    @pytest.fixture
+    def run(self, tmp_path):
+        """Run ``FailsOnBad`` on 10 records, of which record 4 fails."""
+        plugin_path = tmp_path / "custom_metrics.py"
+        plugin_path.write_text(
+            textwrap.dedent("""\
+            from metric_library.core.base import Metric
+            from metric_library.core.registry import MetricRegistry
+
+            @MetricRegistry.register
+            class FailsOnBad(Metric):
+                def compute(self, sample, client):
+                    if sample.prediction.data == "bad":
+                        raise ValueError("bad record")
+                    return 1.0
+            """)
+        )
+        records_path = tmp_path / "records.json"
+        records_path.write_text(
+            json.dumps(
+                [
+                    {"pred": "bad" if index == 4 else f"p{index}", "gold": "g"}
+                    for index in range(1, 11)
+                ]
+            )
+        )
+        output_path = tmp_path / "result.json"
+
+        def run(*options):
+            result = _run_evaluation(
+                records_path,
+                output_path,
+                "FailsOnBad",
+                "--custom-metrics-path",
+                str(plugin_path),
+                *options,
+            )
+            return result, output_path
+
+        return run
+
+    def test_a_failed_sample_leaves_the_metric_scored_and_the_run_partial(self, run):
+        result, output_path = run()
+
+        assert result.returncode == 2, result.stderr
+        output = _full_output(result, output_path)
+        assert output["ok"] is False
+        assert output["status"] == "partial"
+        # The score of the 9 completed samples; the failed one does not count.
+        assert output["data"]["results"] == {"FailsOnBad": 1.0}
+        assert output["data"]["coverage"] == {
+            "FailsOnBad": {"succeeded": 9, "failed": 1, "skipped": 0, "coverage": 0.9}
+        }
+        assert output["errors"] == ["FailsOnBad: 1 of 10 samples failed (coverage 0.9)"]
+        entry = output["data"]["samples"]["FailsOnBad"][3]
+        assert (entry["sample_id"], entry["status"], entry["error"]) == (
+            "4",
+            "failed",
+            "bad record",
+        )
+        assert entry["error_category"] == "exception:ValueError"
+
+    def test_min_coverage_sets_the_share_of_samples_that_must_complete(self, run):
+        # 0.95 of 10 samples allows no failure, so record 4 stops the metric.
+        result, output_path = run("--min-coverage", "0.95")
+
+        assert result.returncode == 1, result.stderr
+        output = _full_output(result, output_path)
+        assert output["status"] == "failed"
+        message = (
+            "coverage 0.3 is below 0.95: 1 of 10 samples failed and 6 were "
+            "skipped; sample 4: bad record"
+        )
+        assert output["data"]["results"] == {"FailsOnBad": {"error": message}}
+        assert output["errors"] == [f"FailsOnBad: {message}"]
+        assert output["data"]["coverage"]["FailsOnBad"] == {
+            "succeeded": 3,
+            "failed": 1,
+            "skipped": 6,
+            "coverage": 0.3,
+        }
+
+    def test_stop_fails_the_metric_at_its_first_failed_sample(self, run):
+        result, output_path = run("--on-sample-error", "stop")
+
+        assert result.returncode == 1, result.stderr
+        output = _full_output(result, output_path)
+        assert output["data"]["results"] == {
+            "FailsOnBad": {"error": "sample 4: bad record"}
+        }
+        assert output["errors"] == ["FailsOnBad: sample 4: bad record"]
+        entries = output["data"]["samples"]["FailsOnBad"]
+        assert [entry["status"] for entry in entries] == (
+            ["completed"] * 3 + ["failed"] + ["skipped"] * 6
+        )
+
+    @pytest.mark.parametrize(
+        ("options", "message"),
+        [
+            pytest.param(
+                ["--on-sample-error", "stop", "--min-coverage", "0.5"],
+                "--min-coverage requires --on-sample-error continue",
+                id="min-coverage-with-stop",
+            ),
+            *[
+                pytest.param(
+                    ["--min-coverage", value],
+                    "min_coverage must be greater than 0.0 and at most 1.0",
+                    id=f"min-coverage-{value}",
+                )
+                for value in ("0", "1.5", "nan")
+            ],
+        ],
+    )
+    def test_an_invalid_option_is_the_pre_execution_error_envelope(
+        self, run, options, message
+    ):
+        result, output_path = run(*options)
+
+        assert result.returncode == 1
+        output = _full_output(result, output_path, "stderr")
+        assert output["data"] is None
+        assert output["errors"] == [message]
+
+    def test_an_unknown_on_sample_error_is_an_argparse_error(self, run):
+        result, output_path = run("--on-sample-error", "skip")
+
+        assert result.returncode == 2
+        assert "argument --on-sample-error: invalid choice: 'skip'" in result.stderr
         assert not output_path.exists()

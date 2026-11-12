@@ -233,6 +233,7 @@ shows the same envelope without `data.samples` and with `output_path`:
         }
       }
     },
+    "coverage": {"Accuracy": {"succeeded": 10, "failed": 0, "skipped": 0, "coverage": 1.0}},
     "samples": {
       "Accuracy": [
         {"sample_id": "1", "status": "completed", "score": 1.0, "error": null, "matches": {"billing": {"scores": [[1.0]], "n_pred": 1, "n_ref": 1}}},
@@ -255,7 +256,9 @@ shows the same envelope without `data.samples` and with `output_path`:
   is the value under `--sample-id-key`, or the record position counted from 1.
   `status` is `completed`, `failed` or `skipped`. `score` is the per-sample
   score of a completed sample and `null` otherwise. `error` holds the message
-  of a failed sample. `matches` is `null` with the default `whole` matcher.
+  of a failed sample, and `error_category` its kind, such as
+  `bedrock:ThrottlingException`. `matches` is `null` with the default `whole`
+  matcher.
   With `--matcher labels`, it maps every label of the prediction or the
   reference to its pair scores (`scores`, one row per predicted item with one
   score per reference item) and its item counts (`n_pred`, `n_ref`).
@@ -279,13 +282,23 @@ shows the same envelope without `data.samples` and with `output_path`:
   gives the mean accuracy (`0.8` on the intent file) and the median
   `TextExactMatch` score (`1.0`). `--matcher` aligns with `--metrics` in the
   same way.
+- `data.coverage[metric]` counts the `succeeded`, `failed` and `skipped`
+  samples of the metric, and `coverage` is the share that succeeded.
 - `status` and the exit code summarize the run: `completed` / 0 when every
-  metric completed, `partial` / 2 when some metrics completed and some did not,
-  `failed` / 1 when none completed or the runner stopped before the metrics.
-  `errors` lists one `"<metric>: <message>"` entry per failed metric.
-- When one sample of a metric fails, the metric result becomes
-  `{"error": "sample <id>: <message>"}`. Its `data.samples` list keeps every
-  entry: the failed sample carries the message, and the later samples are
+  metric completed with every sample, `partial` / 2 when some metrics
+  completed and some did not or left out failed samples, `failed` / 1 when
+  none completed or the runner stopped before the metrics. `errors` lists one
+  `"<metric>: <message>"` entry per failed metric, and one such as
+  `"Accuracy: 1 of 10 samples failed (coverage 0.9)"` per completed metric
+  with failed samples.
+- When a sample of a metric fails, it is `failed` with its message, and the
+  other samples are still scored. The metric keeps the score of its completed
+  samples when they are at least 0.9 of its records (`--min-coverage`);
+  otherwise the metric result becomes
+  `{"error": "coverage <coverage> is below 0.9: ...; sample <id>: <message>"}`,
+  and the samples it stopped before are `skipped`. With
+  `--on-sample-error stop`, the first failed sample makes the metric
+  `{"error": "sample <id>: <message>"}`, and the later samples are
   `skipped`.
 - A run that stops before the metrics (a missing key, a bad `--quantile` or
   weight, a duplicate identifier, a repeated metric name, a `prf` entry
@@ -361,7 +374,10 @@ explanation the judge gave for it.
 
 Transient Bedrock errors are retried (3 attempts, delays of 1 s and 2 s). A
 sample that still fails, or a judge reply outside the expected JSON shape,
-makes the metric `{"error": "sample <id>: <message>"}` and the run `failed`.
+fails that sample. One failed record of five leaves the coverage below 0.9,
+so the metric becomes
+`{"error": "coverage <coverage> is below 0.9: ...; sample <id>: <message>"}`
+and the run `failed`.
 Leave out `--prompt-key` and the run stops before the judge with
 `prompts are required for LLMCorrectness`.
 
