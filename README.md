@@ -960,7 +960,9 @@ Rules for authors:
   Bedrock or on code that releases the GIL, such as image decoding; for
   pure-Python `compute` they only add overhead. A value other than `True` or
   `False` fails the metric before scoring. A subclass of `LLMMetric` inherits
-  `True`; one that keeps state in an override sets `False`.
+  `True`, except one that defines `compute` or `compute_matrix` without
+  setting `thread_safe` in the same class: it gets `False`, and its class
+  definition emits a `UserWarning`.
 - With the `labels` or `list` matcher and the `prf` aggregator, the engine
   calls `compute` once for each candidate pair of items:
   `sample.prediction` and `sample.reference` each hold one item, and the
@@ -1033,6 +1035,14 @@ An `LLMMetric` subclass accepts only the `whole` matcher. To accept `labels`
 and `list` with a metric that compares a prediction with a reference,
 subclass `LLMBatchMetric` from the same module: its `compute_matrix`
 applies the rubric to all item pairs of a class in one judge call.
+
+The engine judges several samples of an LLM metric at the same time and calls
+one metric instance from several threads, so the section hooks described
+below, such as `rubric` and `prediction`, and `_build_judge_request` keep
+per-sample values in local variables, not on `self`. A subclass that
+overrides `compute` or `compute_matrix` anyway, without setting `thread_safe`
+in the same class, is scored one sample at a time, and its class definition
+emits a `UserWarning`.
 
 #### How the request is composed
 
@@ -1625,7 +1635,7 @@ adds `compute_matrix`.
 - `compute(sample, client) -> float | SampleOutput` - Abstract; every metric implements it. Returns one finite real for one `EvaluationSample`, or a `SampleOutput` that carries the score and a `details` mapping that the sample result keeps. With an item matcher, the sample holds one predicted item and one reference item, and the score must be from 0.0 to 1.0. Deterministic metrics ignore `client`
 - `compute_matrix(sample, predicted, references, client) -> list[list[float]]` - `LLMBatchMetric` only. Scores each pair of the predicted items and the reference items of one class in one judge call, with the rubric of the metric and the prompt and contexts of `sample`: one row per predicted item, one score per reference item. With the `labels` or `list` matcher, the engine calls it for a class with two or more items on one side, in blocks of at most 10 by 10 items, and checks the shape and the range of the scores
 - `default_aggregation_method` - Class attribute of type `AggregationMethod | None`, default `None`. The engine uses it as the aggregator when the caller sets none; `None` means `numeric_mean`. A default of `prf` also needs an item matcher from the caller
-- `thread_safe` - Class attribute of type `bool`, default `False`. `True` lets the engine score up to `max_workers` samples of the metric at the same time; `False` scores one sample at a time. `LLMMetric` and the two semantic match metrics set `True`
+- `thread_safe` - Class attribute of type `bool`, default `False`. `True` lets the engine score up to `max_workers` samples of the metric at the same time; `False` scores one sample at a time. `LLMMetric` and the two semantic match metrics set `True`; an `LLMMetric` subclass that defines `compute` or `compute_matrix` without setting `thread_safe` in the same class gets `False`, with a `UserWarning`
 - `validate_evaluation_inputs(predictions, references, context, prompts)` - Check input presence and alignment against the metric's `reference_policy`, `prompt_policy`, `context_policy` (defaults REQUIRED / OMIT / OMIT); the engine calls it once, before it builds the client
 - `get_info()` - Get metric information
 
