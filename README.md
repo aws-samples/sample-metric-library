@@ -594,8 +594,10 @@ keys; with `--omit-reasoning`, `reasoning` is `null`.
   scored while the failed one ran are SKIPPED too, and their Bedrock calls
   are still billed; a sample that fails only after long retries can leave
   many of them. A call in flight cannot be stopped: after Ctrl-C, the run
-  ends once the calls in flight return. A test whose mocked client answers in
-  call order needs `max_workers=1`.
+  ends once the calls in flight return, which takes up to 30 minutes when a
+  connection stalls (see Retries under [LLM Metrics](#llm-metrics)). A second
+  Ctrl-C ends it at once. A test whose mocked client answers in call order
+  needs `max_workers=1`.
 - **Client construction.** The engine calls `client_factory()` when a metric
   first uses the client and builds at most one client per evaluation. The default
   factory builds a `BedrockClient`. A metric that never reads the client never
@@ -930,7 +932,9 @@ Rules for authors:
   Bedrock or on code that releases the GIL, such as image decoding; for
   pure-Python `compute` they only add overhead. A value other than `True` or
   `False` fails the metric before scoring. A subclass of `LLMMetric` inherits
-  `True`; one that keeps state in an override sets `False`.
+  `True`, except one that defines `compute` or `compute_matrix` without
+  setting `thread_safe` in the same class: it gets `False`, and its class
+  definition emits a `UserWarning`.
 - With the `labels` or `list` matcher and the `prf` aggregator, the engine
   calls `compute` once for each candidate pair of items:
   `sample.prediction` and `sample.reference` each hold one item, and the
@@ -1003,6 +1007,14 @@ An `LLMMetric` subclass accepts only the `whole` matcher. To accept `labels`
 and `list` with a metric that compares a prediction with a reference,
 subclass `LLMBatchMetric` from the same module: its `compute_matrix`
 applies the rubric to all item pairs of a class in one judge call.
+
+The engine judges several samples of an LLM metric at the same time and calls
+one metric instance from several threads, so the section hooks described
+below, such as `rubric` and `prediction`, and `_build_judge_request` keep
+per-sample values in local variables, not on `self`. A subclass that
+overrides `compute` or `compute_matrix` anyway, without setting `thread_safe`
+in the same class, is scored one sample at a time, and its class definition
+emits a `UserWarning`.
 
 #### How the request is composed
 
@@ -1568,7 +1580,7 @@ adds `compute_matrix`.
 - `compute(sample, client) -> float | SampleOutput` - Abstract; every metric implements it. Returns one finite real for one `EvaluationSample`, or a `SampleOutput` that carries the score and a `details` mapping that the sample result keeps. With an item matcher, the sample holds one predicted item and one reference item, and the score must be from 0.0 to 1.0. Deterministic metrics ignore `client`
 - `compute_matrix(sample, predicted, references, client) -> list[list[float]]` - `LLMBatchMetric` only. Scores each pair of the predicted items and the reference items of one class in one judge call, with the rubric of the metric and the prompt and contexts of `sample`: one row per predicted item, one score per reference item. With the `labels` or `list` matcher, the engine calls it for a class with two or more items on one side, in blocks of at most 10 by 10 items, and checks the shape and the range of the scores
 - `default_aggregation_method` - Class attribute of type `AggregationMethod | None`, default `None`. The engine uses it as the aggregator when the caller sets none; `None` means `numeric_mean`. A default of `prf` also needs an item matcher from the caller
-- `thread_safe` - Class attribute of type `bool`, default `False`. `True` lets the engine score up to `max_workers` samples of the metric at the same time; `False` scores one sample at a time. `LLMMetric` and the two semantic match metrics set `True`
+- `thread_safe` - Class attribute of type `bool`, default `False`. `True` lets the engine score up to `max_workers` samples of the metric at the same time; `False` scores one sample at a time. `LLMMetric` and the two semantic match metrics set `True`; an `LLMMetric` subclass that defines `compute` or `compute_matrix` without setting `thread_safe` in the same class gets `False`, with a `UserWarning`
 - `validate_evaluation_inputs(predictions, references, context, prompts)` - Check input presence and alignment against the metric's `reference_policy`, `prompt_policy`, `context_policy` (defaults REQUIRED / OMIT / OMIT); the engine calls it once, before it builds the client
 - `get_info()` - Get metric information
 
@@ -1702,7 +1714,7 @@ Version 0.2.0 replaces the two computation paths of 0.1.0 with one engine. These
 43. **Python version.** The library needs Python 3.12 or later; 0.1.0 accepted 3.10. The means add with `sum()`, which Python 3.12 made compensated, so on 3.10 and 3.11 some means differed in the last digit. On an older Python, `pip install` stops with `requires a different Python`.
 44. **Output file.** The runner writes the `--output-path` envelope to a new file in the same folder and then moves it into place. The file gets mode 0600 (only its owner can read it), also when it replaces an existing file; a symbolic link at that path is replaced instead of followed; and a failed write leaves the earlier file as it was. Writing needs permission to create files in that folder, and an existing file is replaced even when it is read-only. A path in `/dev` or `/dev/fd`, such as `/dev/null`, `/dev/stdout` or a process substitution, is written in place, and so is a character device or a named pipe that the user owns and that is not itself a symbolic link. Before, the file was written in place: a new file got the mode of the umask, usually 0644, an existing file kept its mode, and a symbolic link was followed.
 45. **Judge client timeouts and retries.** The Bedrock client waits up to 600 seconds for a reply, and boto3 sends each request at most 3 times, in its standard retry mode, whatever `AWS_MAX_ATTEMPTS`, `AWS_RETRY_MODE` or the AWS config file say; the engine's attempts come on top (see Retries under [LLM Metrics](#llm-metrics)). To retry more, raise `max_attempts` of `EvaluationConfiguration`, at most 10; the runner has no option for it. Before, boto3's defaults applied: a read timeout of 60 seconds and up to 5 requests in its legacy retry mode, which those settings could change.
-46. **Concurrent scoring.** The engine scores up to 4 samples of a metric at the same time (`max_workers` of `EvaluationConfiguration`, `--max-workers` on the runner, from 1 to 32) when the metric's class sets `thread_safe = True`, as every LLM metric and the two semantic match metrics do; the other built-in metrics are scored one sample at a time, as before. The order of the samples and the fail-fast rule do not change, but samples after a failed one may already have made judge calls whose results are SKIPPED, and the log lines of different samples interleave. A custom `Metric` subclass keeps scoring one sample at a time until it sets `thread_safe = True`; a custom `LLMMetric` subclass that keeps state in an override sets `thread_safe = False`. A test whose mocked client answers in call order needs `max_workers=1`. The Bedrock client keeps up to 32 connections open, where botocore keeps 10. Before, the engine scored one sample at a time.
+46. **Concurrent scoring.** The engine scores up to 4 samples of a metric at the same time (`max_workers` of `EvaluationConfiguration`, `--max-workers` on the runner, from 1 to 32) when the metric's class sets `thread_safe = True`, as every LLM metric and the two semantic match metrics do; the other built-in metrics are scored one sample at a time, as before. The order of the samples and the fail-fast rule do not change, but samples after a failed one may already have made judge calls whose results are SKIPPED, and the log lines of different samples interleave. A custom `Metric` subclass keeps scoring one sample at a time until it sets `thread_safe = True`. A custom `LLMMetric` subclass is scored concurrently, except one that defines `compute` or `compute_matrix` without setting `thread_safe` in the same class: it is scored one sample at a time, and its class definition emits a `UserWarning`. A test whose mocked client answers in call order needs `max_workers=1`. The Bedrock client keeps up to 32 connections open, where botocore keeps 10. Before, the engine scored one sample at a time.
 
 ## Security
 

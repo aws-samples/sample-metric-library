@@ -49,8 +49,10 @@ Rules for authors:
   metric is scored one sample at a time. Threads help only when
   ``compute`` waits on Bedrock or on code that releases the GIL, such as
   image decoding; for pure-Python ``compute`` they only add overhead. A
-  subclass of ``LLMMetric`` inherits ``True``; one that keeps state in an
-  override sets ``False``.
+  subclass of ``LLMMetric`` inherits ``True``, except one that defines
+  ``compute`` or ``compute_matrix`` without setting ``thread_safe`` in the
+  same class: it gets ``False``, and its class definition emits a
+  ``UserWarning``.
 - With the ``labels`` or ``list`` matcher and the ``prf`` aggregator, the
   engine calls ``compute`` once for each candidate pair of items:
   ``sample.prediction`` and ``sample.reference`` each hold one item, and the

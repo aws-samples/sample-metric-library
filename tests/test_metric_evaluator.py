@@ -16,6 +16,7 @@ import json
 import logging
 import threading
 import time
+import warnings
 from contextlib import contextmanager
 from dataclasses import replace
 from unittest.mock import Mock, call
@@ -62,7 +63,7 @@ from metric_library.core.evaluation import (
     MULTIPLIER_LIMIT,
 )
 from metric_library.core.input_policy import InputPolicy
-from metric_library.core.llm_metric import LLMMetric
+from metric_library.core.llm_metric import LLMBatchMetric, LLMMetric
 
 
 _TRANSIENT_CLIENT_ERROR_CODES = (
@@ -2151,6 +2152,23 @@ def _probe_client(score):
     return Mock(return_value=client), client
 
 
+def _failure_recorded(monkeypatch):
+    """Return an event that is set once the engine records a failed sample.
+
+    A test waits on it instead of sleeping, so that a slow runner cannot let a
+    sample go on before the engine has seen the failure.
+    """
+    recorded = threading.Event()
+    record = evaluation._Cutoff.record
+
+    def recording(self, ordinal):
+        record(self, ordinal)
+        recorded.set()
+
+    monkeypatch.setattr(evaluation._Cutoff, "record", recording)
+    return recorded
+
+
 class _InFlight:
     """Record which samples started, on which threads, and the most at once."""
 
@@ -2336,16 +2354,17 @@ class TestConcurrentScoring:
         assert result.aggregate.skipped_count == 2
 
     def test_no_sample_starts_after_a_failure(self, monkeypatch):
-        # Two workers: sample 0 is still running when sample 1 fails, so the
-        # engine records the failure before any other sample can start.
+        # Two workers: sample 0 runs until the engine has recorded the failure
+        # of sample 1, so a worker is free only after that.
         _register(monkeypatch, ProbeMetric)
         in_flight = _InFlight()
+        recorded = _failure_recorded(monkeypatch)
 
         def score(sample):
             with in_flight.scoring(sample):
                 if sample.ordinal == 1:
                     raise ValueError("sample 1 failed")
-                time.sleep(0.2)
+                recorded.wait(timeout=10)
             return 1.0
 
         client_factory, _ = _probe_client(score)
@@ -2391,6 +2410,7 @@ class TestConcurrentScoring:
         # result will be SKIPPED, so it makes no second attempt.
         _register(monkeypatch, ProbeMetric)
         retrying = threading.Event()
+        recorded = _failure_recorded(monkeypatch)
 
         def score(sample):
             if sample.ordinal == 0:
@@ -2400,7 +2420,7 @@ class TestConcurrentScoring:
 
         def sleeper(delay):
             retrying.set()
-            time.sleep(0.2)
+            recorded.wait(timeout=10)
 
         client_factory, client = _probe_client(score)
 
@@ -2429,16 +2449,14 @@ class TestConcurrentScoring:
         # throttled: it is SKIPPED without waiting for a retry.
         _register(monkeypatch, ProbeMetric)
         calling = threading.Event()
-        failed = threading.Event()
+        recorded = _failure_recorded(monkeypatch)
 
         def score(sample):
             if sample.ordinal == 0:
                 calling.wait(timeout=10)
-                failed.set()
                 raise ValueError("sample 0 failed")
             calling.set()
-            failed.wait(timeout=10)
-            time.sleep(0.2)  # the engine records the failure meanwhile
+            recorded.wait(timeout=10)
             raise _client_error("ThrottlingException")
 
         client_factory, _ = _probe_client(score)
@@ -2625,6 +2643,117 @@ class TestThreadSafeFlag:
         assert CustomMetric.thread_safe is False
         assert LLMMetric.thread_safe is True
         assert CustomJudge.thread_safe is True
+
+    def test_an_llm_metric_that_overrides_compute_defaults_to_false(self):
+        # The override may keep per-sample values on self, which the workers
+        # share. The warning points at the class statement.
+        with pytest.warns(
+            UserWarning,
+            match=r"StatefulJudge overrides compute\(\) without setting thread_safe",
+        ) as caught:
+
+            class StatefulJudge(LLMMetric):
+                def rubric(self):
+                    return "Score the candidate."
+
+                def compute(self, sample, client):
+                    return super().compute(sample, client)
+
+        assert StatefulJudge.thread_safe is False
+        assert len(caught) == 1
+        assert caught[0].filename == __file__
+
+    def test_a_batch_metric_that_overrides_compute_matrix_defaults_to_false(self):
+        with pytest.warns(
+            UserWarning, match=r"StatefulBatchJudge overrides compute_matrix\(\)"
+        ):
+
+            class StatefulBatchJudge(LLMBatchMetric):
+                def rubric(self):
+                    return "Score the candidate."
+
+                def compute_matrix(self, sample, predicted, references, client):
+                    return super().compute_matrix(sample, predicted, references, client)
+
+        assert StatefulBatchJudge.thread_safe is False
+        assert LLMBatchMetric.thread_safe is True
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_an_override_that_sets_thread_safe_keeps_it_without_a_warning(self, value):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+
+            class DeclaredJudge(LLMMetric):
+                thread_safe = value
+
+                def rubric(self):
+                    return "Score the candidate."
+
+                def compute(self, sample, client):
+                    return super().compute(sample, client)
+
+        assert DeclaredJudge.thread_safe is value
+
+    def test_a_subclass_inherits_the_flag_of_the_override_it_reuses(self):
+        with pytest.warns(UserWarning, match="StatefulJudge overrides compute"):
+
+            class StatefulJudge(LLMMetric):
+                def rubric(self):
+                    return "Score the candidate."
+
+                def compute(self, sample, client):
+                    return super().compute(sample, client)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+
+            class StricterJudge(StatefulJudge):
+                def rubric(self):
+                    return "Score the candidate strictly."
+
+        assert StricterJudge.thread_safe is False
+
+    def test_an_llm_metric_that_overrides_compute_is_scored_on_the_calling_thread(
+        self, monkeypatch
+    ):
+        # The override keeps the sample's number on self across the judge call.
+        # One sample at a time, each sample reads its own number back.
+        with pytest.warns(UserWarning, match="StatefulJudge overrides compute"):
+
+            class StatefulJudge(LLMMetric):
+                reference_policy = InputPolicy.OMIT
+
+                def rubric(self):
+                    return "Score the candidate."
+
+                def compute(self, sample, client):
+                    self.current = int(
+                        sample.prediction.get_raw_data().removeprefix("candidate-")
+                    )
+                    super().compute(sample, client)
+                    return self.current / 10
+
+        _register(monkeypatch, StatefulJudge)
+        threads = set()
+
+        def judge(**request):
+            threads.add(threading.get_ident())
+            return _judge(1.0)
+
+        client_factory, _ = _fake_client(judge)
+        count = 2 * DEFAULT_MAX_WORKERS
+
+        result = MetricRegistry.compute_metric(
+            "StatefulJudge",
+            _texts([f"candidate-{index}" for index in range(count)]),
+            [],
+            client_factory=client_factory,
+        )
+
+        assert threads == {threading.get_ident()}
+        assert [sample.score for sample in result.samples] == [
+            index / 10 for index in range(count)
+        ]
 
     def test_only_built_in_metrics_that_call_bedrock_are_thread_safe(self):
         # Threads overlap the Bedrock calls of the LLM and semantic match

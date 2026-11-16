@@ -132,11 +132,12 @@ class LLMMetric(Metric):
 
     # ``compute`` and ``compute_matrix`` build a new request for each call and
     # change no state, so the engine may judge several samples at the same
-    # time. A subclass that keeps state in an override sets it to False.
+    # time. A subclass that overrides one of them without setting thread_safe
+    # in its class body gets False (see ``__init_subclass__``).
     thread_safe: bool = True
 
     def __init_subclass__(cls, **kwargs):
-        """Accept ``get_evaluation_prompt``, the old name of ``rubric``, for now.
+        """Check the rubric name and the thread safety of a new subclass.
 
         A subclass that defines ``get_evaluation_prompt`` and not ``rubric``
         uses it as its ``rubric``, also when it subclasses a built-in metric,
@@ -144,6 +145,12 @@ class LLMMetric(Metric):
         defines ``rubric`` also answers to the old name, so an old override
         that calls ``super().get_evaluation_prompt()`` reads the parent's
         rubric. A subclass with neither method still fails at instantiation.
+
+        A subclass that defines ``compute`` or ``compute_matrix`` may keep
+        per-sample values on ``self``, which the engine's workers share. Unless
+        the same class body sets ``thread_safe``, the subclass gets
+        ``thread_safe = False`` and the class definition emits a
+        ``UserWarning``.
         """
         super().__init_subclass__(**kwargs)
         legacy = cls.__dict__.get("get_evaluation_prompt")
@@ -160,6 +167,24 @@ class LLMMetric(Metric):
             cls.rubric = legacy
         elif legacy is None and "rubric" in cls.__dict__:
             cls.get_evaluation_prompt = cls.__dict__["rubric"]
+
+        overrides = [
+            f"{name}()"
+            for name in ("compute", "compute_matrix")
+            if name in cls.__dict__
+        ]
+        if overrides and "thread_safe" not in cls.__dict__:
+            cls.thread_safe = False
+            # Level 3 points at the class statement, as above.
+            warnings.warn(
+                f"{cls.__name__} overrides {' and '.join(overrides)} without "
+                "setting thread_safe, so the engine scores its samples one at a "
+                "time. Set thread_safe = True in the class when the override "
+                "keeps per-sample values in local variables, not on self; set "
+                "thread_safe = False to silence this warning.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     def validate_evaluation_inputs(
         self,
@@ -547,6 +572,10 @@ class LLMBatchMetric(LLMMetric):
     10 items, and ``compute`` for a class with one item on each side. With the
     ``whole`` matcher, only ``compute`` runs.
     """
+
+    # ``compute_matrix`` builds a new request for each call and changes no
+    # state, as ``compute`` does.
+    thread_safe: bool = True
 
     def compute_matrix(
         self,
