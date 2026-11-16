@@ -230,6 +230,10 @@ class ItemHungarianMatch(DynamicMatch):
 class ItemSemanticMatch(DynamicMatch):
     """Item normalization with semantic comparison"""
 
+    # ``compute`` only reads the comparator, and each sample waits on two
+    # Bedrock embedding calls, so several samples at the same time overlap.
+    thread_safe = True
+
     def __init__(self):
         super().__init__(
             normalization_type=NormalizationType.ITEM.value,
@@ -273,6 +277,10 @@ class RawHungarianMatch(DynamicMatch):
 @MetricRegistry.register
 class RawSemanticMatch(DynamicMatch):
     """Raw normalization with semantic comparison"""
+
+    # ``compute`` only reads the comparator, and each sample waits on two
+    # Bedrock embedding calls, so several samples at the same time overlap.
+    thread_safe = True
 
     def __init__(self):
         super().__init__(

@@ -52,6 +52,13 @@ class Metric(ABC):
     # Default aggregator for the engine; None means numeric_mean
     default_aggregation_method: AggregationMethod | None = None
 
+    # True lets the engine score up to ``max_workers`` samples at the same time,
+    # calling ``compute`` of one instance from several threads; False scores
+    # one sample at a time. Set True only when ``compute`` keeps per-sample
+    # values local, guards any change to shared state with a lock, and gives
+    # each sample a score that does not depend on the other samples.
+    thread_safe: bool = False
+
     def __init__(self, name: str = None):
         """
         Initialize the metric.

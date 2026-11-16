@@ -30,6 +30,11 @@ DEFAULT_MODEL_ID = "global.anthropic.claude-sonnet-4-6"
 # selected profile name one.
 DEFAULT_REGION = "us-east-1"
 
+# Connections the client keeps open for reuse; botocore keeps 10. The engine's
+# workers share one client, and MAX_WORKERS_LIMIT in evaluation.py is this
+# number, so every worker has a connection.
+MAX_POOL_CONNECTIONS = 32
+
 
 class BedrockClient:
     """
@@ -99,6 +104,7 @@ class BedrockClient:
             config=Config(
                 read_timeout=600,
                 retries={"mode": "standard", "total_max_attempts": 3},
+                max_pool_connections=MAX_POOL_CONNECTIONS,
             ),
         )
 

@@ -39,6 +39,8 @@ from metric_library.core.aggregation import (
 from metric_library.core.bedrock_client import BedrockClient
 from metric_library.core.data_handler import DataHandler
 from metric_library.core.evaluation import (
+    DEFAULT_MAX_WORKERS,
+    MAX_WORKERS_LIMIT,
     EvaluationConfiguration,
     MetricEvaluationResult,
     _safe_error,
@@ -767,6 +769,18 @@ def main():
             "in the environment. Omitted: the standard boto3 credential chain."
         ),
     )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=DEFAULT_MAX_WORKERS,
+        help=(
+            "Number of samples of each metric scored at the same time, from 1 "
+            f"to {MAX_WORKERS_LIMIT}, so at most this many Bedrock calls are in "
+            "flight; the metrics run one after another, and a metric that does "
+            "not set thread_safe = True is scored one sample at a time. Lower "
+            f"it when Bedrock throttles the run. Omitted: {DEFAULT_MAX_WORKERS}."
+        ),
+    )
     args = parser.parse_args()
 
     if args.list_metrics:
@@ -923,18 +937,18 @@ def main():
             "list": ListItems(class_key=args.class_key, value_key=args.value_key),
         }
         # One configuration per distinct (method, matcher) entry, in first-seen
-        # order. An entry without a method keeps the metric's default.
+        # order. An entry without a method keeps the metric's default, and
+        # every entry carries --max-workers.
         entries = list(zip(methods, matchers))
         configurations: dict[tuple, EvaluationConfiguration] = {}
         for method, matcher in dict.fromkeys(entries):
-            if method is None:
-                continue
             configurations[(method, matcher)] = EvaluationConfiguration(
                 aggregation_method=method,
                 weights=weights if method == "weighted_mean" else None,
                 quantile=args.quantile if method == "quantile" else None,
                 thresholds=thresholds if method == "prf" else None,
                 matcher=matcher_objects[matcher],
+                max_workers=args.max_workers,
             )
         meta["metrics"] = {
             name: _metric_meta(name, method, matcher, args, thresholds)
@@ -942,7 +956,8 @@ def main():
         }
 
         # One batch_compute call per distinct entry; metrics on their default
-        # share the call with configuration=None. Report in --metrics order.
+        # share the call with a configuration that sets no method. Report in
+        # --metrics order.
         merged: dict[str, MetricEvaluationResult | MetricError] = {}
         for entry in dict.fromkeys(entries):
             names = [
@@ -957,7 +972,7 @@ def main():
                     ref_data,
                     context,
                     prompt_data,
-                    configuration=configurations.get(entry),
+                    configuration=configurations[entry],
                     client_factory=client_factory,
                 )
             )
