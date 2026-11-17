@@ -5,7 +5,8 @@
 
 ``query`` is exercised through the exact Converse request it builds and the
 result it extracts from the Converse response; ``get_embeddings`` is only
-checked to still go through ``invoke_model``. No live AWS is ever reached.
+checked to still go through ``invoke_model``. The retry tests build the real
+botocore client, which sends no request. No live AWS is ever reached.
 """
 
 import io
@@ -279,3 +280,56 @@ class TestConnectionPool:
 
         assert config.call_args.kwargs["max_pool_connections"] == MAX_POOL_CONNECTIONS
         assert MAX_POOL_CONNECTIONS >= MAX_WORKERS_LIMIT
+
+
+class TestRetryMode:
+    """boto3 sends each request at most 3 times, in its adaptive retry mode.
+
+    The adaptive mode spaces out the requests of the client, which the
+    engine's workers share, once Bedrock throttles one of them.
+    """
+
+    @pytest.mark.parametrize(
+        ("environment", "config_file"),
+        [
+            pytest.param(
+                {"AWS_RETRY_MODE": "legacy", "AWS_MAX_ATTEMPTS": "10"},
+                "",
+                id="environment",
+            ),
+            pytest.param(
+                {},
+                "[default]\nretry_mode = standard\nmax_attempts = 10\n",
+                id="config-file",
+            ),
+        ],
+    )
+    def test_the_aws_settings_change_neither_the_mode_nor_the_count(
+        self, monkeypatch, tmp_path, environment, config_file
+    ):
+        # The real botocore client, which reaches no endpoint until a request
+        # is sent. Static keys keep the credential chain off the network, and
+        # the files of this test replace the user's AWS configuration.
+        for name in (
+            "AWS_PROFILE",
+            "AWS_DEFAULT_PROFILE",
+            "AWS_SESSION_TOKEN",
+            "AWS_RETRY_MODE",
+            "AWS_MAX_ATTEMPTS",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        config_path = tmp_path / "config"
+        config_path.write_text(config_file)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_path))
+        monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "missing"))
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+        for name, value in environment.items():
+            monkeypatch.setenv(name, value)
+
+        bedrock = BedrockClient(model_id="test-model", region="us-east-1")
+
+        assert bedrock.client.meta.config.retries == {
+            "mode": "adaptive",
+            "total_max_attempts": 3,
+        }

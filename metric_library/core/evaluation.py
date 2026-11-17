@@ -72,6 +72,11 @@ MAX_WORKERS_LIMIT = MAX_POOL_CONNECTIONS
 DEFAULT_MIN_COVERAGE = 0.9
 DEFAULT_MAX_CONSECUTIVE_FAILURES = 10
 
+# The error category of a sample that Bedrock still throttled after its
+# retries. Fewer workers send fewer requests a minute, so the advice for a
+# metric that several workers scored is to lower max_workers.
+THROTTLED_CATEGORY = "bedrock:ThrottlingException"
+
 # One ``compute_matrix`` call scores at most this many predicted items and
 # this many reference items.
 MATRIX_BLOCK_SIZE = 10
@@ -421,6 +426,27 @@ class _Cutoff:
             raise _SampleSkipped
 
 
+def _throttling_advice(throttled: int, failed: int, workers: int) -> str | None:
+    """Advise fewer workers for a metric whose failed samples Bedrock throttled.
+
+    ``throttled`` of the ``failed`` samples failed with ``THROTTLED_CATEGORY``
+    while ``workers`` samples were scored at the same time. A metric scored one
+    sample at a time gets no advice, and nor does one without such a sample.
+    """
+    if throttled == 0 or workers < 2:
+        return None
+    if throttled < failed:
+        subject = f"{throttled} of the {failed} failed samples"
+    elif failed == 1:
+        subject = "the failed sample"
+    else:
+        subject = "every failed sample"
+    return (
+        f"Bedrock throttled {subject}, so run again with max_workers "
+        f"(--max-workers) below {workers}"
+    )
+
+
 class _SampleFailures:
     """Apply ``on_sample_error`` to the samples of one metric as they end.
 
@@ -428,7 +454,9 @@ class _SampleFailures:
     records its sample in ``cutoff``. In continue mode, a failure stops every
     sample when its error would fail every later sample too, when it is the
     ``max_consecutive_failures``-th failure in a row, or when so many samples
-    have failed that ``min_coverage`` can no longer be reached.
+    have failed that ``min_coverage`` can no longer be reached. When one of
+    the last two rules stops it, the log line adds ``_throttling_advice`` for
+    ``workers``.
     """
 
     def __init__(
@@ -437,12 +465,15 @@ class _SampleFailures:
         total: int,
         configuration: EvaluationConfiguration,
         cutoff: _Cutoff,
+        workers: int,
     ) -> None:
         self._metric_name = metric_name
         self._total = total
         self._configuration = configuration
         self._cutoff = cutoff
+        self._workers = workers
         self._failed = 0
+        self._throttled = 0
         self._in_a_row = 0
 
     @property
@@ -468,8 +499,11 @@ class _SampleFailures:
             return  # it was running when the scoring stopped
         self._failed += 1
         self._in_a_row += 1
+        if category == THROTTLED_CATEGORY:
+            self._throttled += 1
         min_coverage = self._configuration.min_coverage
-        if _is_fatal(error):
+        fatal = _is_fatal(error)
+        if fatal:
             reason = f"{category} would fail every later sample"
         elif self._in_a_row >= self._configuration.max_consecutive_failures:
             reason = f"{self._in_a_row} samples failed in a row"
@@ -480,8 +514,29 @@ class _SampleFailures:
             )
         else:
             return
+        # Fewer workers would not avoid an error that every later sample hits.
+        advice = (
+            None
+            if fatal
+            else _throttling_advice(self._throttled, self._failed, self._workers)
+        )
+        if advice is not None:
+            reason = f"{reason}; {advice}"
         logger.warning("Stopping %s: %s", self._metric_name, reason)
         self._cutoff.stop_all()
+
+
+def _scoring_workers(
+    metric: Metric | type[Metric], max_workers: int, sample_count: int
+) -> int:
+    """How many samples of ``metric`` the engine scores at the same time.
+
+    Only a metric whose ``thread_safe`` is True gets several workers, and no
+    more than it has samples. The runner passes the metric's class.
+    """
+    if metric.thread_safe is not True:
+        return 1
+    return max(1, min(max_workers, sample_count))
 
 
 def evaluate_metric(
@@ -565,10 +620,11 @@ def evaluate_metric(
             cutoff,
         )
 
-    failures = _SampleFailures(metric_name, len(samples), configuration, cutoff)
-    workers = min(configuration.max_workers, len(samples))
-    # Only a metric that declares itself thread-safe gets several workers.
-    if workers > 1 and metric.thread_safe:
+    workers = _scoring_workers(metric, configuration.max_workers, len(samples))
+    failures = _SampleFailures(
+        metric_name, len(samples), configuration, cutoff, workers
+    )
+    if workers > 1:
         outcomes = _score_concurrently(samples, score, workers, cutoff, failures)
     else:
         outcomes = _score_sequentially(samples, score, failures)

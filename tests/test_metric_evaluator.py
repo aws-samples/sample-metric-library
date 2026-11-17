@@ -2926,6 +2926,145 @@ class TestContinueOnSampleError:
             *[self.SKIPPED] * 4,
         ]
 
+    @staticmethod
+    def _stops(caplog):
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.getMessage().startswith("Stopping ")
+        ]
+
+    @pytest.mark.parametrize(
+        ("metric_class", "failures", "options", "stop"),
+        [
+            pytest.param(
+                ProbeMetric,
+                {2: "throttled", 5: "throttled"},
+                {},
+                "2 of 10 samples failed, so coverage can no longer reach 0.9; "
+                "Bedrock throttled every failed sample, so run again with "
+                "max_workers (--max-workers) below 4",
+                id="coverage",
+            ),
+            pytest.param(
+                ProbeMetric,
+                {ordinal: "throttled" for ordinal in range(10)},
+                {"max_consecutive_failures": 3, "min_coverage": 0.1},
+                "3 samples failed in a row; Bedrock throttled every failed "
+                "sample, so run again with max_workers (--max-workers) below 4",
+                id="in-a-row",
+            ),
+            pytest.param(
+                ProbeMetric,
+                {2: "throttled", 5: "invalid"},
+                {},
+                "2 of 10 samples failed, so coverage can no longer reach 0.9; "
+                "Bedrock throttled 1 of the 2 failed samples, so run again with "
+                "max_workers (--max-workers) below 4",
+                id="some-throttled",
+            ),
+            pytest.param(
+                ProbeMetric,
+                {2: "throttled", 5: "throttled"},
+                {"max_workers": 2},
+                "2 of 10 samples failed, so coverage can no longer reach 0.9; "
+                "Bedrock throttled every failed sample, so run again with "
+                "max_workers (--max-workers) below 2",
+                id="two-workers",
+            ),
+            pytest.param(
+                ProbeMetric,
+                {2: "throttled", 5: "throttled"},
+                {"max_workers": 1},
+                "2 of 10 samples failed, so coverage can no longer reach 0.9",
+                id="one-worker",
+            ),
+            pytest.param(
+                UnflaggedProbeMetric,
+                {2: "throttled", 5: "throttled"},
+                {},
+                "2 of 10 samples failed, so coverage can no longer reach 0.9",
+                id="not-thread-safe",
+            ),
+            pytest.param(
+                ProbeMetric,
+                {2: "invalid", 5: "invalid"},
+                {},
+                "2 of 10 samples failed, so coverage can no longer reach 0.9",
+                id="not-throttled",
+            ),
+        ],
+    )
+    def test_a_stop_after_throttled_samples_advises_fewer_workers(
+        self, monkeypatch, caplog, metric_class, failures, options, stop
+    ):
+        # Fewer workers send fewer requests a minute, so the advice needs a
+        # throttled sample and more than one worker.
+        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
+        name = _register(monkeypatch, metric_class)
+        errors = {
+            "throttled": lambda: _client_error("ThrottlingException"),
+            "invalid": lambda: ValueError("the judge reply quotes the record"),
+        }
+
+        def score(sample):
+            failure = failures.get(sample.ordinal)
+            if failure is not None:
+                raise errors[failure]()
+            return 1.0
+
+        client_factory, _ = _probe_client(score)
+
+        MetricRegistry.compute_metric(
+            name,
+            _texts([f"value-{index}" for index in range(10)]),
+            [],
+            configuration=EvaluationConfiguration(max_attempts=1, **options),
+            client_factory=client_factory,
+        )
+
+        assert self._stops(caplog) == [f"Stopping {name}: {stop}"]
+
+    def test_an_error_that_every_later_sample_would_hit_gets_no_advice(
+        self, monkeypatch, caplog
+    ):
+        # Sample 5 is denied only once the engine has recorded the throttled
+        # sample 2; fewer workers would not avoid the denial.
+        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
+        _register(monkeypatch, ProbeMetric)
+        recorded = threading.Event()
+        failed = evaluation._SampleFailures.failed
+
+        def recording(self, sample, error):
+            failed(self, sample, error)
+            recorded.set()
+
+        monkeypatch.setattr(evaluation._SampleFailures, "failed", recording)
+
+        def score(sample):
+            if sample.ordinal == 2:
+                raise _client_error("ThrottlingException")
+            if sample.ordinal == 5:
+                assert recorded.wait(timeout=10)
+                raise _client_error("AccessDeniedException")
+            return 1.0
+
+        client_factory, _ = _probe_client(score)
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts([f"value-{index}" for index in range(10)]),
+            [],
+            configuration=EvaluationConfiguration(max_attempts=1),
+            client_factory=client_factory,
+        )
+
+        assert result.samples[2].error_category == "bedrock:ThrottlingException"
+        assert self._stops(caplog) == [
+            "Stopping ProbeMetric: bedrock:AccessDeniedException would fail "
+            "every later sample"
+        ]
+
 
 class TestThreadSafeFlag:
     """The ``thread_safe`` defaults and their validation."""

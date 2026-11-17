@@ -44,9 +44,12 @@ from metric_library.core.evaluation import (
     DEFAULT_MAX_WORKERS,
     DEFAULT_MIN_COVERAGE,
     MAX_WORKERS_LIMIT,
+    THROTTLED_CATEGORY,
     EvaluationConfiguration,
     MetricEvaluationResult,
     _safe_error,
+    _scoring_workers,
+    _throttling_advice,
 )
 from metric_library.core.llm_metric import LLMBatchMetric, LLMMetric
 from metric_library.core.matching import LabelSet, ListItems, WholeValue
@@ -300,6 +303,7 @@ def _envelope_value(
     result: MetricEvaluationResult | MetricError,
     record_ids: list[str],
     on_sample_error: str,
+    advice: str | None = None,
 ) -> float | dict | MetricError:
     """Map one engine result to the envelope value.
 
@@ -307,7 +311,7 @@ def _envelope_value(
     aggregator provides one (the ``prf`` aggregator), else to its finite
     float score. A failed result is a MetricError that names its first failed
     sample by the record identifier at its ordinal; with ``continue``, the
-    coverage and the failure counts come first.
+    coverage, the failure counts and the ``advice``, if any, come first.
     """
     if isinstance(result, MetricError):
         return result
@@ -319,9 +323,12 @@ def _envelope_value(
         if on_sample_error == "stop":
             return MetricError(failure)
         aggregate = result.aggregate
+        summary = _failure_counts(aggregate)
+        if advice is not None:
+            summary = f"{summary}; {advice}"
         return MetricError(
             f"coverage {_coverage_text(aggregate)} is below "
-            f"{aggregate.spec.min_coverage:g}: {_failure_counts(aggregate)}; {failure}"
+            f"{aggregate.spec.min_coverage:g}: {summary}; {failure}"
         )
     if result.aggregate.values is not None:
         return result.aggregate.values
@@ -355,6 +362,30 @@ def _failure_counts(aggregate: AggregationResult) -> str:
     if skipped:
         text += f" and {skipped} {'was' if skipped == 1 else 'were'} skipped"
     return text
+
+
+def _metric_throttling_advice(
+    name: str,
+    result: MetricEvaluationResult | MetricError,
+    on_sample_error: str,
+    max_workers: int,
+) -> str | None:
+    """The advice to lower --max-workers for a metric that Bedrock throttled.
+
+    Only with ``continue``, so that a ``stop`` error stays
+    ``sample <id>: <message>``. The metric's class gives its ``thread_safe``,
+    so the advice names the number of samples that were scored at a time.
+    """
+    if on_sample_error != "continue" or not isinstance(result, MetricEvaluationResult):
+        return None
+    metric_class = MetricRegistry.metrics.get(normalize_metric_name(name))
+    if metric_class is None:
+        return None
+    throttled = sum(
+        sample.error_category == THROTTLED_CATEGORY for sample in result.samples
+    )
+    workers = _scoring_workers(metric_class, max_workers, len(result.samples))
+    return _throttling_advice(throttled, result.aggregate.failed_count, workers)
 
 
 def _sample_entries(
@@ -1062,14 +1093,22 @@ def main():
         values = {}
         metric_errors = []
         for name, result in results.items():
-            values[name] = _envelope_value(result, record_ids, args.on_sample_error)
+            advice = _metric_throttling_advice(
+                name, result, args.on_sample_error, args.max_workers
+            )
+            values[name] = _envelope_value(
+                result, record_ids, args.on_sample_error, advice
+            )
             if isinstance(values[name], MetricError):
                 metric_errors.append(f"{name}: {values[name]['error']}")
             elif result.aggregate.coverage < 1.0:
-                metric_errors.append(
+                entry = (
                     f"{name}: {_failure_counts(result.aggregate)} "
                     f"(coverage {_coverage_text(result.aggregate)})"
                 )
+                if advice is not None:
+                    entry = f"{entry}; {advice}"
+                metric_errors.append(entry)
         scored_count = sum(
             not isinstance(value, MetricError) for value in values.values()
         )
