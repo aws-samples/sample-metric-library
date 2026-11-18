@@ -985,6 +985,7 @@ class TestItemMatchers:
             configuration=EvaluationConfiguration(
                 aggregation_method="prf",
                 matcher=ListItems(class_key="type", value_key="text"),
+                on_sample_error="stop",
             ),
         )
 

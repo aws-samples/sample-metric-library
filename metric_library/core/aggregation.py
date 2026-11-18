@@ -43,12 +43,24 @@ class SampleStatus(str, Enum):
 class EvaluationStatus(str, Enum):
     """Status for one metric's detailed evaluation.
 
-    Evaluation stops at the first sample that still fails after retries, so an
-    aggregate is either complete or failed; there is no partial aggregate.
+    An aggregate is COMPLETED when every sample completed. It is
+    PARTIAL when some samples completed and others failed or were
+    skipped; its score comes from the completed samples only. It is FAILED,
+    without a score, when no sample completed.
     """
 
     COMPLETED = "completed"
+    PARTIAL = "partial"
     FAILED = "failed"
+
+
+def _status_for(succeeded_count: int, total_count: int) -> EvaluationStatus:
+    """The aggregate status for ``succeeded_count`` of ``total_count`` samples."""
+    if succeeded_count == total_count:
+        return EvaluationStatus.COMPLETED
+    if succeeded_count:
+        return EvaluationStatus.PARTIAL
+    return EvaluationStatus.FAILED
 
 
 @dataclass(frozen=True)
@@ -111,8 +123,10 @@ class SampleResult:
     """One numeric sample outcome consumed by an aggregator.
 
     Skipped samples carry no payload: a sample is skipped only when evaluation
-    stops after an earlier failure, which the status already says. ``matches``
+    stops early after a failure, which the status already says. ``matches``
     holds one ``Matches`` for each class when an item matcher scored the sample.
+    ``error_category`` is the kind of error of a failed sample, such as
+    ``bedrock:ThrottlingException``, without its message.
     """
 
     sample_id: str
@@ -122,6 +136,7 @@ class SampleResult:
     error: str | None = None
     details: dict | None = None
     matches: dict | None = None
+    error_category: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.sample_id, str) or not self.sample_id.strip():
@@ -132,6 +147,14 @@ class SampleResult:
             raise ValueError("ordinal must be non-negative")
         if not isinstance(self.status, SampleStatus):
             raise TypeError("status must be a SampleStatus")
+        if self.error_category is not None:
+            if self.status is not SampleStatus.FAILED:
+                raise ValueError("only failed samples can contain an error category")
+            if (
+                not isinstance(self.error_category, str)
+                or not self.error_category.strip()
+            ):
+                raise ValueError("error_category must be a non-empty string")
 
         if self.status is SampleStatus.COMPLETED:
             normalized_score = _validate_score(self.score)
@@ -293,7 +316,8 @@ class AggregationResult:
             raise ValueError("coverage must equal succeeded_count / total_count")
         object.__setattr__(self, "coverage", normalized_coverage)
 
-        if self.method == "prf" and self.status is EvaluationStatus.COMPLETED:
+        scored = self.status is not EvaluationStatus.FAILED
+        if self.method == "prf" and scored:
             if self.values is None:
                 raise ValueError("completed prf aggregation requires values")
             if not isinstance(self.values, dict):
@@ -303,18 +327,25 @@ class AggregationResult:
         elif self.values is not None:
             raise ValueError("values are allowed only for a completed prf aggregation")
 
-        if self.status is EvaluationStatus.COMPLETED:
+        if scored:
             object.__setattr__(self, "score", _validate_score(self.score))
+        elif self.score is not None:
+            raise ValueError("failed aggregation cannot contain a score")
+
+        if self.status is EvaluationStatus.COMPLETED:
             if self.succeeded_count != self.total_count:
                 raise ValueError(
-                    "completed aggregation requires every sample to succeed"
+                    "completed aggregation requires every sample to complete"
                 )
-            return
-
-        if self.score is not None:
-            raise ValueError("failed aggregation cannot contain a score")
-        if self.failed_count != 1:
-            raise ValueError("failed aggregation requires exactly one failed sample")
+        elif self.status is EvaluationStatus.PARTIAL:
+            if self.succeeded_count == 0:
+                raise ValueError("partial aggregation requires a completed sample")
+            if self.succeeded_count == self.total_count:
+                raise ValueError(
+                    "partial aggregation requires a sample that did not complete"
+                )
+        elif self.succeeded_count:
+            raise ValueError("failed aggregation requires no completed sample")
 
     def _validate_denominator(self) -> None:
         if self.method == "weighted_mean":
@@ -382,6 +413,11 @@ def aggregate(
     results: Sequence[SampleResult],
     spec: AggregationSpec,
 ) -> AggregationResult:
+    """Aggregate the completed samples of ``results`` with ``spec``.
+
+    The aggregate is COMPLETED when every sample completed, PARTIAL
+    when only some did, and FAILED, without a score, when none did.
+    """
     if spec.method == "prf":
         return _aggregate_prf(results, spec)
     return _aggregate_numeric(results, spec)
@@ -395,7 +431,6 @@ def _aggregate_numeric(
     if not samples:
         raise ValueError("at least one sample result is required")
     _validate_sample_sequence(samples)
-    validate_fail_fast_sequence(samples)
 
     total_count = len(samples)
     spec.validate_for(total_count)
@@ -407,13 +442,9 @@ def _aggregate_numeric(
     succeeded_count = len(completed)
     coverage = succeeded_count / total_count
 
-    status = (
-        EvaluationStatus.COMPLETED
-        if succeeded_count == total_count
-        else EvaluationStatus.FAILED
-    )
+    status = _status_for(succeeded_count, total_count)
     candidate_score, denominator = _reduce_successful(completed, spec)
-    score = candidate_score if status is EvaluationStatus.COMPLETED else None
+    score = None if status is EvaluationStatus.FAILED else candidate_score
 
     return AggregationResult(
         method=spec.method,
@@ -474,7 +505,6 @@ def _aggregate_prf(
     if not samples:
         raise ValueError("at least one sample result is required")
     _validate_sample_sequence(samples)
-    validate_fail_fast_sequence(samples)
 
     total_count = len(samples)
     spec.validate_for(total_count)
@@ -486,14 +516,8 @@ def _aggregate_prf(
     succeeded_count = len(completed)
     coverage = succeeded_count / total_count
 
-    status = (
-        EvaluationStatus.COMPLETED
-        if succeeded_count == total_count
-        else EvaluationStatus.FAILED
-    )
-    values = (
-        _prf_values(completed, spec) if status is EvaluationStatus.COMPLETED else None
-    )
+    status = _status_for(succeeded_count, total_count)
+    values = None if status is EvaluationStatus.FAILED else _prf_values(completed, spec)
 
     return AggregationResult(
         method=spec.method,

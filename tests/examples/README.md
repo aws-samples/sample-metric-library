@@ -233,6 +233,8 @@ shows the same envelope without `data.samples` and with `output_path`:
         }
       }
     },
+    "status": {"Accuracy": "completed"},
+    "coverage": {"Accuracy": {"succeeded": 10, "failed": 0, "skipped": 0, "coverage": 1.0}},
     "samples": {
       "Accuracy": [
         {"sample_id": "1", "status": "completed", "score": 1.0, "error": null, "matches": {"billing": {"scores": [[1.0]], "n_pred": 1, "n_ref": 1}}},
@@ -255,7 +257,9 @@ shows the same envelope without `data.samples` and with `output_path`:
   is the value under `--sample-id-key`, or the record position counted from 1.
   `status` is `completed`, `failed` or `skipped`. `score` is the per-sample
   score of a completed sample and `null` otherwise. `error` holds the message
-  of a failed sample. `matches` is `null` with the default `whole` matcher.
+  of a failed sample, and `error_category` its kind, such as
+  `bedrock:ThrottlingException`. `matches` is `null` with the default `whole`
+  matcher.
   With `--matcher labels`, it maps every label of the prediction or the
   reference to its pair scores (`scores`, one row per predicted item with one
   score per reference item) and its item counts (`n_pred`, `n_ref`).
@@ -279,14 +283,29 @@ shows the same envelope without `data.samples` and with `output_path`:
   gives the mean accuracy (`0.8` on the intent file) and the median
   `TextExactMatch` score (`1.0`). `--matcher` aligns with `--metrics` in the
   same way.
+- `data.status[metric]` is `completed` when every sample of the metric
+  completed, `partial` when its score comes from only some of its samples,
+  and `failed` when it has no score.
+- `data.coverage[metric]` counts the `succeeded`, `failed` and `skipped`
+  samples of the metric, and `coverage` is the share that succeeded.
 - `status` and the exit code summarize the run: `completed` / 0 when every
-  metric completed, `partial` / 2 when some metrics completed and some did not,
-  `failed` / 1 when none completed or the runner stopped before the metrics.
-  `errors` lists one `"<metric>: <message>"` entry per failed metric.
-- When one sample of a metric fails, the metric result becomes
-  `{"error": "sample <id>: <message>"}`. Its `data.samples` list keeps every
-  entry: the failed sample carries the message, and the later samples are
-  `skipped`.
+  metric is `completed`, `partial` / 2 when at least one metric has a score
+  and at least one is not `completed` (one `partial` metric and one `failed`
+  one, for example), `failed` / 1 when every metric is `failed` or the runner
+  stopped before the metrics. `errors` lists one
+  `"<metric>: <message>"` entry per failed metric, and one such as
+  `"Accuracy: 1 of 10 samples failed (coverage 0.9)"` per `partial`
+  metric.
+- When a sample of a metric fails, it is `failed` with its message, and the
+  other samples are still scored. The metric keeps the score of its completed
+  samples, however few; when none completed, the metric result becomes
+  `{"error": "no sample completed: ...; sample <id>: <message>"}`. An error
+  that every later sample would hit too, such as expired credentials, stops
+  the metric, and the samples it stopped before are `skipped`. With
+  `--on-sample-error stop`, the first failed sample stops the metric, and
+  the later samples are `skipped`; the records before it give the score, and
+  when the first record fails, the metric becomes
+  `{"error": "sample <id>: <message>"}`.
 - A run that stops before the metrics (a missing key, a bad `--quantile` or
   weight, a duplicate identifier, a repeated metric name, a `prf` entry
   without `--matcher labels` or `list`) writes the envelope to standard error
@@ -361,7 +380,10 @@ explanation the judge gave for it.
 
 Transient Bedrock errors are retried (3 attempts, delays of 1 s and 2 s). A
 sample that still fails, or a judge reply outside the expected JSON shape,
-makes the metric `{"error": "sample <id>: <message>"}` and the run `failed`.
+fails that sample. The metric then gets the score of the other four records,
+`errors` gets the entry
+`"LLMCorrectness: 1 of 5 samples failed (coverage 0.8)"`, and the run is
+`partial`.
 Leave out `--prompt-key` and the run stops before the judge with
 `prompts are required for LLMCorrectness`.
 

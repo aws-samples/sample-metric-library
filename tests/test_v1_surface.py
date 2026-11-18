@@ -190,9 +190,15 @@ class TestBatchComputeSurface:
             result = results[name]
             assert isinstance(result, MetricEvaluationResult), (name, result)
             assert result.status is EvaluationStatus.FAILED, name
-            assert result.samples[0].error == "live AWS is forbidden in tests", name
+            # Several samples start at the same time, so the samples after the
+            # one whose failure stops the metric are FAILED or SKIPPED.
+            assert {
+                sample.error
+                for sample in result.samples
+                if sample.status is SampleStatus.FAILED
+            } == {"live AWS is forbidden in tests"}, name
             assert all(
-                sample.status is SampleStatus.SKIPPED for sample in result.samples[1:]
+                sample.status is not SampleStatus.COMPLETED for sample in result.samples
             ), name
 
 

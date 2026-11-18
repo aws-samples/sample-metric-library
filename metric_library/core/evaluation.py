@@ -12,17 +12,25 @@ import logging
 import math
 import threading
 import time
+from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from numbers import Real
-from typing import Callable
+from typing import Callable, Literal
 
 from botocore.exceptions import (
     ClientError,
     ConnectionClosedError,
     ConnectTimeoutError,
+    CredentialRetrievalError,
     EndpointConnectionError,
+    NoCredentialsError,
+    PartialCredentialsError,
+    ProfileNotFound,
     ReadTimeoutError,
+    SSOTokenLoadError,
+    TokenRetrievalError,
+    UnauthorizedSSOTokenError,
 )
 
 from .aggregation import (
@@ -35,7 +43,6 @@ from .aggregation import (
     SampleResult,
     SampleStatus,
     aggregate as aggregate_samples,
-    validate_fail_fast_sequence,
 )
 from .base import Metric
 from .bedrock_client import MAX_POOL_CONNECTIONS, BedrockClient
@@ -59,6 +66,11 @@ MULTIPLIER_LIMIT = 5.0
 # workers share, so that every worker has a pooled connection.
 DEFAULT_MAX_WORKERS = 4
 MAX_WORKERS_LIMIT = MAX_POOL_CONNECTIONS
+
+# The error category of a sample that Bedrock still throttled after its
+# retries. Fewer workers send fewer requests a minute, so the advice for a
+# metric that several workers scored is to lower max_workers.
+THROTTLED_CATEGORY = "bedrock:ThrottlingException"
 
 # One ``compute_matrix`` call scores at most this many predicted items and
 # this many reference items.
@@ -161,9 +173,19 @@ class EvaluationConfiguration:
     """Caller overrides for one metric evaluation.
 
     ``max_attempts`` is how many times one sample may be scored before it is
-    recorded as failed. A sample that still fails after its last attempt stops
-    the evaluation: earlier successes are kept, later samples are skipped, and
-    the aggregate status is failed.
+    recorded as failed.
+
+    ``on_sample_error`` sets what a failed sample does. With ``"continue"``,
+    the default, the other samples are still scored, and the aggregate is
+    PARTIAL with the score of the completed samples, whatever their
+    share; it is FAILED only when no sample completed. The scoring stops
+    early, and the samples it has not scored are SKIPPED, only when a sample
+    fails with an error that every later sample would hit too, such as
+    expired credentials or a model without access. With ``"stop"``, a sample
+    that fails stops the evaluation: later samples are skipped, and the
+    aggregate is PARTIAL with the score of the earlier samples, or
+    FAILED when the first sample failed. In both modes the aggregate is
+    COMPLETED only when every sample completed.
 
     Retries wait ``min(max_delay, initial_delay * multiplier ** (n - 1))``
     seconds after the ``n``-th failed attempt.
@@ -183,9 +205,11 @@ class EvaluationConfiguration:
     True are scored at the same time, each on its own thread; any other
     metric, or ``max_workers=1``, is scored one sample at a time on the
     calling thread. Samples are handed out in input order, and the results
-    keep the input order. Once a sample fails, no sample starts and no later
-    sample makes another attempt; the failure reported is the first in input
-    order, and every later sample is skipped, also one that was already
+    keep the input order. Once the scoring stops, no sample starts and no
+    stopped sample makes another attempt, but a call in flight runs to its
+    end. With ``"continue"``, the result of such a call is kept. With
+    ``"stop"``, only later samples stop: the failure reported is the first in
+    input order, and every later sample is skipped, also one that was already
     scored.
     """
 
@@ -200,6 +224,7 @@ class EvaluationConfiguration:
     matcher: Matcher = WholeValue()
     # Last, so that a configuration built positionally keeps its meaning.
     max_workers: int = DEFAULT_MAX_WORKERS
+    on_sample_error: Literal["continue", "stop"] = "continue"
 
     def __post_init__(self) -> None:
         if isinstance(self.max_attempts, bool) or not isinstance(
@@ -217,6 +242,9 @@ class EvaluationConfiguration:
             raise ValueError("max_workers must be at least 1")
         if self.max_workers > MAX_WORKERS_LIMIT:
             raise ValueError(f"max_workers must be at most {MAX_WORKERS_LIMIT}")
+
+        if self.on_sample_error not in ("continue", "stop"):
+            raise ValueError("on_sample_error must be 'continue' or 'stop'")
 
         initial_delay = _normalize_timing_value("initial_delay", self.initial_delay)
         multiplier = _normalize_timing_value("multiplier", self.multiplier)
@@ -312,7 +340,6 @@ class MetricEvaluationResult:
             or skipped_count != self.aggregate.skipped_count
         ):
             raise ValueError("sample statuses must match aggregate counts")
-        validate_fail_fast_sequence(self.samples)
         expected_coverage = succeeded_count / len(self.samples)
         if self.aggregate.coverage != expected_coverage:
             raise ValueError("aggregate coverage must match successful samples")
@@ -352,15 +379,16 @@ class _LazyClient:
 
 
 class _SampleSkipped(Exception):
-    """A sample stopped because an earlier sample failed: it is SKIPPED."""
+    """A sample stopped because the scoring stopped: it is SKIPPED."""
 
 
 class _Cutoff:
-    """The ordinal of the earliest failed sample, which every worker reads.
+    """The ordinal after which samples stop, which every worker reads.
 
-    Only the scheduler writes it. ``check`` raises ``_SampleSkipped`` for a
-    later sample, so a sample whose result would be SKIPPED makes no further
-    Bedrock call; after ``stop_all`` it raises for every sample.
+    Only the scheduler writes it: ``record`` keeps the earliest failed sample
+    in stop mode, and ``stop_all`` stops every sample. ``check`` raises
+    ``_SampleSkipped`` for a later sample, so a sample whose result would be
+    SKIPPED makes no further Bedrock call.
     """
 
     def __init__(self) -> None:
@@ -376,6 +404,64 @@ class _Cutoff:
     def check(self, sample: EvaluationSample) -> None:
         if self.ordinal is not None and sample.ordinal > self.ordinal:
             raise _SampleSkipped
+
+
+class _SampleFailures:
+    """Apply ``on_sample_error`` to the samples of one metric as they fail.
+
+    Only the thread that runs the scoring calls it. In stop mode, a failure
+    records its sample in ``cutoff``. In continue mode, only a failure whose
+    error every later sample would hit too stops every sample.
+    """
+
+    def __init__(
+        self,
+        metric_name: str,
+        configuration: EvaluationConfiguration,
+        cutoff: _Cutoff,
+    ) -> None:
+        self._metric_name = metric_name
+        self._configuration = configuration
+        self._cutoff = cutoff
+
+    @property
+    def stopped(self) -> bool:
+        return self._cutoff.ordinal is not None
+
+    def failed(self, sample: EvaluationSample, error: Exception) -> None:
+        category = _classify_failure(error)[1]
+        # The category, not the message: the message can quote dataset content.
+        logger.warning(
+            "Sample %s of %s failed with %s",
+            sample.sample_id,
+            self._metric_name,
+            category,
+        )
+        if self._configuration.on_sample_error == "stop":
+            self._cutoff.record(sample.ordinal)
+            return
+        # A sample that was running when the scoring stopped changes nothing.
+        if self.stopped or not _is_fatal(error):
+            return
+        logger.warning(
+            "Stopping %s: %s would fail every later sample",
+            self._metric_name,
+            category,
+        )
+        self._cutoff.stop_all()
+
+
+def _scoring_workers(
+    metric: Metric | type[Metric], max_workers: int, sample_count: int
+) -> int:
+    """How many samples of ``metric`` the engine scores at the same time.
+
+    Only a metric whose ``thread_safe`` is True gets several workers, and no
+    more than it has samples. The runner passes the metric's class.
+    """
+    if metric.thread_safe is not True:
+        return 1
+    return max(1, min(max_workers, sample_count))
 
 
 def evaluate_metric(
@@ -459,14 +545,19 @@ def evaluate_metric(
             cutoff,
         )
 
-    workers = min(configuration.max_workers, len(samples))
-    # Only a metric that declares itself thread-safe gets several workers.
-    if workers > 1 and metric.thread_safe:
-        outcomes = _score_concurrently(samples, score, workers, cutoff)
+    workers = _scoring_workers(metric, configuration.max_workers, len(samples))
+    failures = _SampleFailures(metric_name, configuration, cutoff)
+    if workers > 1:
+        outcomes = _score_concurrently(samples, score, workers, cutoff, failures)
     else:
-        outcomes = _score_sequentially(samples, score)
+        outcomes = _score_sequentially(samples, score, failures)
 
-    sample_results = _fail_fast_results(samples, outcomes)
+    if configuration.on_sample_error == "stop":
+        sample_results = _fail_fast_results(samples, outcomes)
+    else:
+        sample_results = _continued_results(samples, outcomes)
+    _log_failures(metric_name, sample_results)
+    # In both modes, the score comes from the completed samples, however few.
     aggregate = aggregate_samples(sample_results, aggregation)
     return MetricEvaluationResult(
         metric_name=metric_name,
@@ -478,19 +569,22 @@ def evaluate_metric(
 def _score_sequentially(
     samples: tuple[EvaluationSample, ...],
     score: Callable[[EvaluationSample], SampleResult],
+    failures: _SampleFailures,
 ) -> dict[int, SampleResult | Exception]:
     """Score the samples one after another on the calling thread.
 
     Returns the result or the error of each scored sample by ordinal; the
-    first error stops the scoring.
+    scoring ends when ``failures`` stops it.
     """
     outcomes: dict[int, SampleResult | Exception] = {}
     for sample in samples:
+        if failures.stopped:
+            break
         try:
             outcomes[sample.ordinal] = score(sample)
         except Exception as error:
             outcomes[sample.ordinal] = error
-            break
+            failures.failed(sample, error)
     return outcomes
 
 
@@ -499,17 +593,18 @@ def _score_concurrently(
     score: Callable[[EvaluationSample], SampleResult],
     workers: int,
     cutoff: _Cutoff,
+    failures: _SampleFailures,
 ) -> dict[int, SampleResult | Exception]:
     """Score up to ``workers`` samples at the same time.
 
     Returns the result or the error of each scored sample by ordinal. Samples
-    are submitted in input order, the next one as soon as a worker is free. A
-    failure sets ``cutoff``: no sample is submitted after it, and a later
-    sample stops before its next attempt, though a call in flight runs to its
-    end, as a thread cannot be stopped. Every sample before the first failure
-    in input order was submitted earlier and has finished, so
-    ``_fail_fast_results`` gives the results of scoring one sample after
-    another.
+    are submitted in input order, the next one as soon as a worker is free.
+    Once ``failures`` sets ``cutoff``, no sample is submitted, and a sample
+    after the cutoff stops before its next attempt, though a call in flight
+    runs to its end, as a thread cannot be stopped. In stop mode, every sample
+    before the first failure in input order was submitted earlier and has
+    finished, so ``_fail_fast_results`` gives the results of scoring one
+    sample after another.
     """
     outcomes: dict[int, SampleResult | Exception] = {}
     running: dict[Future, EvaluationSample] = {}
@@ -533,12 +628,12 @@ def _score_concurrently(
                 try:
                     outcomes[sample.ordinal] = future.result()
                 except _SampleSkipped:
-                    pass  # an earlier sample failed: this one is SKIPPED
+                    pass  # the scoring stopped: this sample is SKIPPED
                 except Exception as error:
                     # Only an Exception fails the sample. A BaseException,
                     # such as KeyboardInterrupt, propagates, as with one worker.
                     outcomes[sample.ordinal] = error
-                    cutoff.record(sample.ordinal)
+                    failures.failed(sample, error)
     except BaseException:
         # Return at once: start nothing more, stop every running sample before
         # its next attempt, and let the calls in flight end on their own.
@@ -556,7 +651,8 @@ def _fail_fast_results(
     """Keep the results up to the first error in input order, then stop.
 
     That sample is FAILED and every later sample is SKIPPED, even one that
-    completed on another worker, so the aggregate is explicitly failed.
+    completed on another worker, so the results, and the score of the earlier
+    samples, are those of scoring one sample after another.
     """
     results: list[SampleResult] = []
     for index, sample in enumerate(samples):
@@ -564,24 +660,80 @@ def _fail_fast_results(
         if isinstance(outcome, SampleResult):
             results.append(outcome)
             continue
-        results.append(
-            SampleResult(
-                sample_id=sample.sample_id,
-                ordinal=sample.ordinal,
-                status=SampleStatus.FAILED,
-                error=_safe_error(outcome),
-            )
-        )
-        results.extend(
-            SampleResult(
-                sample_id=remaining.sample_id,
-                ordinal=remaining.ordinal,
-                status=SampleStatus.SKIPPED,
-            )
-            for remaining in samples[index + 1 :]
-        )
+        results.append(_failed_result(sample, outcome))
+        results.extend(_skipped_result(remaining) for remaining in samples[index + 1 :])
         break
     return tuple(results)
+
+
+def _continued_results(
+    samples: tuple[EvaluationSample, ...],
+    outcomes: dict[int, SampleResult | Exception],
+) -> tuple[SampleResult, ...]:
+    """Keep the outcome of every sample, in input order.
+
+    A sample without an outcome, because the scoring stopped first, is SKIPPED.
+    """
+    results: list[SampleResult] = []
+    for sample in samples:
+        outcome = outcomes.get(sample.ordinal)
+        if isinstance(outcome, SampleResult):
+            results.append(outcome)
+        elif outcome is None:
+            results.append(_skipped_result(sample))
+        else:
+            results.append(_failed_result(sample, outcome))
+    return tuple(results)
+
+
+def _failed_result(sample: EvaluationSample, error: Exception) -> SampleResult:
+    return SampleResult(
+        sample_id=sample.sample_id,
+        ordinal=sample.ordinal,
+        status=SampleStatus.FAILED,
+        error=_safe_error(error),
+        error_category=_classify_failure(error)[1],
+    )
+
+
+def _skipped_result(sample: EvaluationSample) -> SampleResult:
+    return SampleResult(
+        sample_id=sample.sample_id,
+        ordinal=sample.ordinal,
+        status=SampleStatus.SKIPPED,
+    )
+
+
+def _log_failures(metric_name: str, results: tuple[SampleResult, ...]) -> None:
+    """Log one line with the outcome of a metric that has failed samples.
+
+    The line counts the completed samples, which alone give the score, the
+    failed ones by error category and the skipped ones, and says whether the
+    metric has a score or failed because no sample completed.
+    """
+    categories = Counter(
+        result.error_category
+        for result in results
+        if result.status is SampleStatus.FAILED
+    )
+    if not categories:
+        return
+    completed = sum(result.status is SampleStatus.COMPLETED for result in results)
+    skipped = sum(result.status is SampleStatus.SKIPPED for result in results)
+    logger.warning(
+        "%s: %d of %d samples completed, %d failed (%s), %d skipped; %s",
+        metric_name,
+        completed,
+        len(results),
+        categories.total(),
+        ", ".join(
+            f"{category} {count}" for category, count in categories.most_common()
+        ),
+        skipped,
+        "the score comes from the completed samples"
+        if completed
+        else "the metric failed",
+    )
 
 
 def _check_matcher(
@@ -883,6 +1035,44 @@ _TRANSIENT_TRANSPORT_EXCEPTIONS = (
     ReadTimeoutError,
     ConnectionClosedError,
 )
+
+
+# Errors that every later sample of the metric would hit too: the credentials,
+# the access to the model or the model itself is wrong, which no retry and no
+# other sample fixes. With on_sample_error="continue", the first one stops the
+# metric. A ValidationException is not here: it can come from one sample.
+_FATAL_CLIENT_ERROR_CODES = frozenset(
+    {
+        "ExpiredTokenException",
+        "UnrecognizedClientException",
+        "InvalidClientTokenId",
+        "InvalidSignatureException",
+        "IncompleteSignature",
+        "RequestExpired",
+        "AccessDeniedException",
+        "NotAuthorized",
+        "OptInRequired",
+        "FTUFormNotFilled",
+        "MPAgreementBeingCreated",
+        "ResourceNotFoundException",
+    }
+)
+_FATAL_EXCEPTIONS = (
+    NoCredentialsError,
+    PartialCredentialsError,
+    CredentialRetrievalError,
+    ProfileNotFound,
+    UnauthorizedSSOTokenError,
+    SSOTokenLoadError,
+    TokenRetrievalError,
+)
+
+
+def _is_fatal(error: Exception) -> bool:
+    """Return whether every later sample would fail with ``error`` too."""
+    if isinstance(error, ClientError):
+        return _safe_client_error_code(error) in _FATAL_CLIENT_ERROR_CODES
+    return isinstance(error, _FATAL_EXCEPTIONS)
 
 
 def _safe_type_name(error: BaseException) -> str:
