@@ -4869,19 +4869,34 @@ class TestOnSampleErrorOption:
         entries = output["data"]["samples"]["FailsOnBad"]
         assert [entry["status"] for entry in entries] == ["failed"] * 10
 
-    def test_stop_fails_the_metric_at_its_first_failed_sample(self, run):
+    def test_stop_ends_the_metric_at_its_first_failed_sample(self, run):
+        # Records 1 to 3, before the failed record 4, give the score.
         result, output_path = run("--on-sample-error", "stop")
 
-        assert result.returncode == 1, result.stderr
+        assert result.returncode == 2, result.stderr
         output = _full_output(result, output_path)
-        assert output["data"]["results"] == {
-            "FailsOnBad": {"error": "sample 4: bad record"}
-        }
-        assert output["errors"] == ["FailsOnBad: sample 4: bad record"]
+        assert output["status"] == "partial"
+        assert output["data"]["results"] == {"FailsOnBad": 1.0}
+        assert output["errors"] == [
+            "FailsOnBad: 1 of 10 samples failed and 6 were skipped (coverage 0.3)"
+        ]
         entries = output["data"]["samples"]["FailsOnBad"]
         assert [entry["status"] for entry in entries] == (
             ["completed"] * 3 + ["failed"] + ["skipped"] * 6
         )
+
+    def test_stop_fails_the_metric_when_its_first_record_fails(self, run):
+        result, output_path = run("--on-sample-error", "stop", bad=(1,))
+
+        assert result.returncode == 1, result.stderr
+        output = _full_output(result, output_path)
+        assert output["status"] == "failed"
+        assert output["data"]["results"] == {
+            "FailsOnBad": {"error": "sample 1: bad record"}
+        }
+        assert output["errors"] == ["FailsOnBad: sample 1: bad record"]
+        entries = output["data"]["samples"]["FailsOnBad"]
+        assert [entry["status"] for entry in entries] == ["failed"] + ["skipped"] * 9
 
     def test_min_coverage_is_not_an_option(self, run):
         result, output_path = run("--min-coverage", "0.5")
@@ -4904,11 +4919,6 @@ class TestThrottlingAdvice:
     Only with ``--on-sample-error continue``, and only for a metric whose
     samples were scored more than one at a time.
     """
-
-    THROTTLED = (
-        "sample 4: An error occurred (ThrottlingException) when calling the "
-        "Converse operation: Too many requests"
-    )
 
     @pytest.fixture
     def run(self, tmp_path):
@@ -5033,10 +5043,26 @@ class TestThrottlingAdvice:
         assert output["data"]["results"] == {"Throttled": {"error": message}}
         assert output["errors"] == [f"Throttled: {message}"]
 
-    def test_stop_keeps_the_error_of_its_failed_sample(self, run):
-        result, output_path = run({4: "busy"}, "--on-sample-error", "stop")
+    @pytest.mark.parametrize(
+        ("values", "returncode", "entry"),
+        [
+            pytest.param(
+                {4: "busy"},
+                2,
+                "Throttled: 1 of 10 samples failed and 6 were skipped (coverage 0.3)",
+                id="scored-records-before",
+            ),
+            pytest.param(
+                {1: "busy"},
+                1,
+                "Throttled: sample 1: An error occurred (ThrottlingException) when "
+                "calling the Converse operation: Too many requests",
+                id="first-record",
+            ),
+        ],
+    )
+    def test_stop_gives_no_advice(self, run, values, returncode, entry):
+        result, output_path = run(values, "--on-sample-error", "stop")
 
-        assert result.returncode == 1, result.stderr
-        assert _full_output(result, output_path)["errors"] == [
-            f"Throttled: {self.THROTTLED}"
-        ]
+        assert result.returncode == returncode, result.stderr
+        assert _full_output(result, output_path)["errors"] == [entry]

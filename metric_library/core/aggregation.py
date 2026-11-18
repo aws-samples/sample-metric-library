@@ -45,8 +45,7 @@ class EvaluationStatus(str, Enum):
 
     An aggregate is COMPLETED when at least one of its samples completed, and
     its score comes from the completed samples only. It is FAILED, without a
-    score, when no sample completed, or when a failed sample fails it, as with
-    the engine's ``on_sample_error="stop"``.
+    score, when no sample completed.
     """
 
     COMPLETED = "completed"
@@ -324,10 +323,8 @@ class AggregationResult:
 
         if self.score is not None:
             raise ValueError("failed aggregation cannot contain a score")
-        if self.succeeded_count and not self.failed_count:
-            raise ValueError(
-                "failed aggregation with completed samples requires a failed sample"
-            )
+        if self.succeeded_count:
+            raise ValueError("failed aggregation requires no completed sample")
 
     def _validate_denominator(self) -> None:
         if self.method == "weighted_mean":
@@ -394,33 +391,19 @@ def prf(
 def aggregate(
     results: Sequence[SampleResult],
     spec: AggregationSpec,
-    *,
-    fail_fast: bool = False,
 ) -> AggregationResult:
     """Aggregate the completed samples of ``results`` with ``spec``.
 
-    The aggregate is FAILED, without a score, when no sample completed, and
-    with ``fail_fast`` also when a sample failed: the engine passes it for
-    ``on_sample_error="stop"``, where the first failed sample fails its metric.
+    The aggregate is FAILED, without a score, when no sample completed.
     """
     if spec.method == "prf":
-        return _aggregate_prf(results, spec, fail_fast)
-    return _aggregate_numeric(results, spec, fail_fast)
-
-
-def _status(
-    succeeded_count: int, failed_count: int, fail_fast: bool
-) -> EvaluationStatus:
-    """COMPLETED with a completed sample, unless ``fail_fast`` and one failed."""
-    if succeeded_count == 0 or (fail_fast and failed_count):
-        return EvaluationStatus.FAILED
-    return EvaluationStatus.COMPLETED
+        return _aggregate_prf(results, spec)
+    return _aggregate_numeric(results, spec)
 
 
 def _aggregate_numeric(
     results: Sequence[SampleResult],
     spec: AggregationSpec,
-    fail_fast: bool = False,
 ) -> AggregationResult:
     samples = tuple(results)
     if not samples:
@@ -437,7 +420,7 @@ def _aggregate_numeric(
     succeeded_count = len(completed)
     coverage = succeeded_count / total_count
 
-    status = _status(succeeded_count, failed_count, fail_fast)
+    status = EvaluationStatus.COMPLETED if completed else EvaluationStatus.FAILED
     candidate_score, denominator = _reduce_successful(completed, spec)
     score = candidate_score if status is EvaluationStatus.COMPLETED else None
 
@@ -495,7 +478,6 @@ def _reduce_successful(
 def _aggregate_prf(
     results: Sequence[SampleResult],
     spec: AggregationSpec,
-    fail_fast: bool = False,
 ) -> AggregationResult:
     samples = tuple(results)
     if not samples:
@@ -512,7 +494,7 @@ def _aggregate_prf(
     succeeded_count = len(completed)
     coverage = succeeded_count / total_count
 
-    status = _status(succeeded_count, failed_count, fail_fast)
+    status = EvaluationStatus.COMPLETED if completed else EvaluationStatus.FAILED
     values = (
         _prf_values(completed, spec) if status is EvaluationStatus.COMPLETED else None
     )

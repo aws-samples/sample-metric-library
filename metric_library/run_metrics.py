@@ -306,10 +306,10 @@ def _envelope_value(
 
     A completed result maps to its aggregate ``values`` object when the
     aggregator provides one (the ``prf`` aggregator), else to its finite
-    float score. A failed result is a MetricError that names its first failed
-    sample by the record identifier at its ordinal. With ``continue``, a
-    metric fails only when no sample completed, which comes first, with the
-    failure counts and the ``advice``, if any.
+    float score. A metric fails only when no sample completed, and its
+    MetricError names its first failed sample by the record identifier at its
+    ordinal. With ``continue``, that comes after the failure counts and the
+    ``advice``, if any.
     """
     if isinstance(result, MetricError):
         return result
@@ -875,8 +875,9 @@ def main():
             "the other samples are scored, and the metric gets the score of its "
             "completed samples, or fails when none completed; it stops early "
             "only on an error that every later sample would hit too, such as "
-            "expired credentials. stop: the first failed sample fails its "
-            "metric. Omitted: continue."
+            "expired credentials. stop: the first failed sample stops its "
+            "metric, which gets the score of the samples before it, or fails "
+            "when there are none. Omitted: continue."
         ),
     )
     args = parser.parse_args()

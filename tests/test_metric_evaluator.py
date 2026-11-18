@@ -742,7 +742,7 @@ class TestRetryPolicy:
                 3,
                 [("score", "0"), ("score", "1")],
                 (SampleStatus.COMPLETED, SampleStatus.FAILED, SampleStatus.SKIPPED),
-                None,
+                0.2,
                 id="terminal-without-retry",
             ),
             pytest.param(
@@ -763,7 +763,7 @@ class TestRetryPolicy:
                     ("score", "1"),
                 ],
                 (SampleStatus.COMPLETED, SampleStatus.FAILED, SampleStatus.SKIPPED),
-                None,
+                0.2,
                 id="exhausted-attempts",
             ),
             pytest.param(
@@ -771,7 +771,7 @@ class TestRetryPolicy:
                 1,
                 [("score", "0"), ("score", "1")],
                 (SampleStatus.COMPLETED, SampleStatus.FAILED, SampleStatus.SKIPPED),
-                None,
+                0.2,
                 id="max-attempts-one",
             ),
         ],
@@ -787,7 +787,8 @@ class TestRetryPolicy:
     ):
         # The policy is metric-agnostic: a deterministic fixture that raises
         # the same errors from ``compute`` gets the same retries, delays
-        # and fail-fast shape as a judge metric.
+        # and fail-fast shape as a judge metric, and the samples before the
+        # failure give the score.
         _register(monkeypatch, SequenceMetric)
         events = []
         client_factory, client = _sequence_client(outcomes, events)
@@ -1041,8 +1042,9 @@ class TestDetailedLLMCorrectnessEvaluation:
         for sample in result.samples[2:]:
             assert sample.score is None
             assert sample.error is None
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        # The sample scored before the stop gives the score.
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 0.2
         assert result.aggregate.total_count == 4
         assert result.aggregate.succeeded_count == 1
         assert result.aggregate.failed_count == 1
@@ -1118,8 +1120,8 @@ class TestDetailedLLMCorrectnessEvaluation:
         assert result.samples[0].score == 0.2
         assert "ThrottlingException" in result.samples[1].error
         assert "once" in result.samples[1].error
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 0.2
         assert result.aggregate.succeeded_count == 1
         assert result.aggregate.failed_count == 1
         assert result.aggregate.skipped_count == 1
@@ -1260,8 +1262,8 @@ class TestMetricEvaluationResultContracts:
         # SKIPPED, wherever it is in the input order.
         aggregate = AggregationResult(
             method="numeric_mean",
-            status=EvaluationStatus.FAILED,
-            score=None,
+            status=EvaluationStatus.COMPLETED,
+            score=0.5,
             total_count=3,
             succeeded_count=1,
             failed_count=1,
@@ -1389,18 +1391,10 @@ class TestAggregationMethodDispatch:
         assert result.score == pytest.approx(expected)
         assert result.aggregate == aggregator(result.samples)
 
-    @pytest.mark.parametrize(
-        ("on_sample_error", "status", "score"),
-        [
-            pytest.param("continue", EvaluationStatus.COMPLETED, 0.65, id="continue"),
-            pytest.param("stop", EvaluationStatus.FAILED, None, id="stop"),
-        ],
-    )
-    def test_weighted_failure_keeps_the_completed_weight_mass(
-        self, on_sample_error, status, score
-    ):
-        # Continue scores the completed samples, (0.2 * 1 + 0.8 * 3) / 4, and
-        # stop fails the metric at its failed sample; both weigh 4.0.
+    @pytest.mark.parametrize("on_sample_error", ["continue", "stop"])
+    def test_weighted_failure_keeps_the_completed_weight_mass(self, on_sample_error):
+        # Both modes score the completed samples, (0.2 * 1 + 0.8 * 3) / 4,
+        # which weigh 4.0; the failed sample's weight does not count.
         client_factory, client = _fake_client(
             [
                 _judge(0.2),
@@ -1428,8 +1422,8 @@ class TestAggregationMethodDispatch:
 
         assert client.query.call_count == 4
         sleeper.assert_called_once_with(1.0)
-        assert result.status is status
-        assert result.score == (pytest.approx(score) if score else None)
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == pytest.approx(0.65)
         assert result.aggregate.method == "weighted_mean"
         assert result.aggregate.denominator == 4.0
         assert result.aggregate.coverage == 2 / 3
@@ -2370,8 +2364,9 @@ class TestConcurrentScoring:
         for sample in result.samples[2:]:
             assert sample.score is None
             assert sample.error is None
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        # Only sample 0, before the reported failure, gives the score.
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 1.0
         assert result.aggregate.succeeded_count == 1
         assert result.aggregate.failed_count == 1
         assert result.aggregate.skipped_count == 2
@@ -2870,16 +2865,36 @@ class TestContinueOnSampleError:
         assert result.aggregate.failed_count == 12
         assert self._stops(caplog) == []
 
-    def test_stop_mode_fails_the_metric_at_its_first_failed_sample(self, monkeypatch):
-        outcomes = [0.5] * 3 + [ValueError("bad")] + [0.5] * 16
+    def test_stop_mode_stops_at_the_first_failure_and_scores_the_earlier_samples(
+        self, monkeypatch
+    ):
+        # Any error stops stop mode, also one that would fail only its sample.
+        outcomes = [0.2, 0.5, 0.8, self.DOWN] + [0.5] * 16
 
         result, scored = self._run(monkeypatch, outcomes, on_sample_error="stop")
 
         assert scored == 4
+        assert [sample.status for sample in result.samples] == [
+            *[self.COMPLETED] * 3,
+            self.FAILED,
+            *[self.SKIPPED] * 16,
+        ]
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == pytest.approx(0.5)
+        assert result.aggregate.coverage == 3 / 20
+
+    def test_stop_mode_fails_the_metric_when_the_first_sample_fails(self, monkeypatch):
+        outcomes = [self.DOWN] + [0.5] * 9
+
+        result, scored = self._run(monkeypatch, outcomes, on_sample_error="stop")
+
+        assert scored == 1
+        assert [sample.status for sample in result.samples] == [
+            self.FAILED,
+            *[self.SKIPPED] * 9,
+        ]
         assert result.status is EvaluationStatus.FAILED
         assert result.score is None
-        assert result.aggregate.succeeded_count == 3
-        assert [sample.score for sample in result.samples[:3]] == [0.5] * 3
 
     def test_a_failed_sample_does_not_stop_the_other_workers(self, monkeypatch):
         _register(monkeypatch, ProbeMetric)

@@ -297,9 +297,10 @@ shows the same envelope without `data.samples` and with `output_path`:
   `{"error": "no sample completed: ...; sample <id>: <message>"}`. An error
   that every later sample would hit too, such as expired credentials, stops
   the metric, and the samples it stopped before are `skipped`. With
-  `--on-sample-error stop`, the first failed sample makes the metric
-  `{"error": "sample <id>: <message>"}`, and the later samples are
-  `skipped`.
+  `--on-sample-error stop`, the first failed sample stops the metric, and
+  the later samples are `skipped`; the records before it give the score, and
+  when the first record fails, the metric becomes
+  `{"error": "sample <id>: <message>"}`.
 - A run that stops before the metrics (a missing key, a bad `--quantile` or
   weight, a duplicate identifier, a repeated metric name, a `prf` entry
   without `--matcher labels` or `list`) writes the envelope to standard error

@@ -579,24 +579,11 @@ class TestNumericMean:
         assert result.denominator == 2
         _assert_counts(result, total=4, succeeded=2, failed=1, skipped=1)
 
-    def test_fail_fast_fails_on_a_failed_sample_and_keeps_the_counts(self):
-        # The engine's on_sample_error="stop": the failed sample fails it.
+    def test_aggregate_dispatches_to_the_numeric_mean(self):
+        # The engine's entry point, in both on_sample_error modes.
         results = (_completed(0, 0.2), _failed(1), _skipped(2), _skipped(3))
 
-        result = aggregate(results, AggregationSpec(), fail_fast=True)
-
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
-        assert result.denominator == 1
-        _assert_counts(result, total=4, succeeded=1, failed=1, skipped=2)
-
-    def test_fail_fast_without_a_failed_sample_completes(self):
-        results = (_completed(0, 0.2), _completed(1, 0.8))
-
-        result = aggregate(results, AggregationSpec(), fail_fast=True)
-
-        assert result == numeric_mean(results)
-        assert result.score == 0.5
+        assert aggregate(results, AggregationSpec()) == numeric_mean(results)
 
     def test_results_must_have_contiguous_ordinals_and_unique_ids(self):
         with pytest.raises(ValueError, match="contiguous ordinal"):
@@ -660,26 +647,19 @@ class TestAggregationResultContracts:
         )
 
     @pytest.mark.parametrize(
-        ("succeeded_count", "skipped_count"),
+        ("succeeded_count", "failed_count", "skipped_count"),
         [
-            pytest.param(3, 0, id="all-completed"),
-            pytest.param(2, 1, id="completed-and-skipped"),
+            pytest.param(3, 0, 0, id="all-completed"),
+            pytest.param(2, 0, 1, id="completed-and-skipped"),
+            pytest.param(2, 1, 1, id="completed-before-a-failed-one"),
         ],
     )
-    def test_failed_status_with_completed_samples_requires_a_failed_sample(
-        self, succeeded_count, skipped_count
+    def test_failed_status_requires_no_completed_sample(
+        self, succeeded_count, failed_count, skipped_count
     ):
-        with pytest.raises(ValueError, match="requires a failed sample"):
-            self._failed_aggregate(succeeded_count, 0, skipped_count)
-
-    def test_failed_status_accepts_completed_samples_before_a_failed_one(self):
-        # The fail-fast aggregate of on_sample_error="stop".
-        result = self._failed_aggregate(2, 1, 1)
-
-        assert (result.status, result.succeeded_count) == (
-            EvaluationStatus.FAILED,
-            2,
-        )
+        # Completed samples give a score, in both on_sample_error modes.
+        with pytest.raises(ValueError, match="requires no completed sample"):
+            self._failed_aggregate(succeeded_count, failed_count, skipped_count)
 
     def test_failed_status_accepts_several_failed_and_skipped_samples(self):
         result = AggregationResult(
@@ -980,17 +960,6 @@ class TestWeightedMean:
         assert result.spec.weights == (1.0, 3.0)
         assert result.coverage == 1.0
 
-    def test_fail_fast_reports_successful_weight_mass_without_score(self):
-        results = (_completed(0, 0.2), _completed(1, 0.8), _failed(2), _skipped(3))
-        spec = AggregationSpec(method="weighted_mean", weights=(1.0, 3.0, 100.0, 100.0))
-
-        result = aggregate(results, spec, fail_fast=True)
-
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
-        assert result.denominator == 4.0
-        assert result.coverage == 0.5
-
     def test_only_the_completed_samples_are_weighed(self):
         results = (_completed(0, 0.2), _failed(1), _completed(2, 0.8), _skipped(3))
 
@@ -1151,20 +1120,18 @@ class TestPrfAggregators:
             assert counts["tp"] + counts["fp"] + counts["fn"] + counts["tn"] == 3
             assert counts["support"] == counts["tp"] + counts["fn"]
 
-    def test_fail_fast_reports_the_numeric_mean_counts_without_values(self):
-        samples = (
-            _match_sample(0, 1.0, {"a": TP}),
-            _failed(1),
-            _skipped(2),
-        )
+    def test_no_completed_sample_reports_the_numeric_mean_counts_without_values(
+        self,
+    ):
+        samples = (_failed(0), _failed(1), _skipped(2))
 
-        result = aggregate(samples, AggregationSpec(method="prf"), fail_fast=True)
+        result = aggregate(samples, AggregationSpec(method="prf"))
 
         assert result.status is EvaluationStatus.FAILED
         assert result.score is None
         assert result.values is None
-        baseline = aggregate(samples, AggregationSpec(), fail_fast=True)
-        _assert_counts(result, total=3, succeeded=1, failed=1, skipped=1)
+        baseline = numeric_mean(samples)
+        _assert_counts(result, total=3, succeeded=0, failed=2, skipped=1)
         assert (result.succeeded_count, result.failed_count, result.skipped_count) == (
             baseline.succeeded_count,
             baseline.failed_count,

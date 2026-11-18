@@ -182,8 +182,9 @@ class EvaluationConfiguration:
     the samples it has not scored are SKIPPED, only when a sample fails with
     an error that every later sample would hit too, such as expired
     credentials or a model without access. With ``"stop"``, a sample that
-    fails stops the evaluation: earlier successes are kept, later samples are
-    skipped, and the aggregate status is failed.
+    fails stops the evaluation: later samples are skipped, and the aggregate
+    is COMPLETED with the score of the earlier samples, or FAILED when the
+    first sample failed.
 
     Retries wait ``min(max_delay, initial_delay * multiplier ** (n - 1))``
     seconds after the ``n``-th failed attempt.
@@ -550,15 +551,13 @@ def evaluate_metric(
     else:
         outcomes = _score_sequentially(samples, score, failures)
 
-    stop = configuration.on_sample_error == "stop"
-    if stop:
+    if configuration.on_sample_error == "stop":
         sample_results = _fail_fast_results(samples, outcomes)
     else:
         sample_results = _continued_results(samples, outcomes)
     _log_failures(metric_name, sample_results)
-    # In stop mode, the failed sample fails the metric; in continue mode, the
-    # score comes from the completed samples, however few.
-    aggregate = aggregate_samples(sample_results, aggregation, fail_fast=stop)
+    # In both modes, the score comes from the completed samples, however few.
+    aggregate = aggregate_samples(sample_results, aggregation)
     return MetricEvaluationResult(
         metric_name=metric_name,
         samples=sample_results,
@@ -651,7 +650,8 @@ def _fail_fast_results(
     """Keep the results up to the first error in input order, then stop.
 
     That sample is FAILED and every later sample is SKIPPED, even one that
-    completed on another worker, so the aggregate is explicitly failed.
+    completed on another worker, so the results, and the score of the earlier
+    samples, are those of scoring one sample after another.
     """
     results: list[SampleResult] = []
     for index, sample in enumerate(samples):

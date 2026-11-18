@@ -562,8 +562,7 @@ class TestJudgeFailures:
 
     With ``on_sample_error="stop"``, the engine records the failing sample with
     the validator's or provider's own message, skips every later sample and
-    reports a failed aggregate with no score; ``compute`` raises the error
-    itself.
+    scores the earlier samples; ``compute`` raises the error itself.
     """
 
     def test_blank_reasoning_on_second_of_three_fails_that_sample_and_skips_the_rest(
@@ -589,8 +588,8 @@ class TestJudgeFailures:
             client_factory=factory,
         )
 
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 0.2
         assert _statuses(result) == (
             SampleStatus.COMPLETED,
             SampleStatus.FAILED,
@@ -623,8 +622,8 @@ class TestJudgeFailures:
             client_factory=factory,
         )
 
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 0.2
         assert _statuses(result) == (
             SampleStatus.COMPLETED,
             SampleStatus.FAILED,
