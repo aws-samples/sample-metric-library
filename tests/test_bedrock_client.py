@@ -18,8 +18,6 @@ import pytest
 
 from metric_library.core.bedrock_client import MAX_POOL_CONNECTIONS, BedrockClient
 from metric_library.core.evaluation import MAX_WORKERS_LIMIT
-from metric_library.core.bedrock_client import MAX_POOL_CONNECTIONS, BedrockClient
-from metric_library.core.evaluation import MAX_WORKERS_LIMIT
 
 # A judge result schema of the kind a forced tool call would be given.
 EVALUATION_SCHEMA = {

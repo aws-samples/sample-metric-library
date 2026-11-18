@@ -43,13 +43,24 @@ class SampleStatus(str, Enum):
 class EvaluationStatus(str, Enum):
     """Status for one metric's detailed evaluation.
 
-    An aggregate is COMPLETED when at least one of its samples completed, and
-    its score comes from the completed samples only. It is FAILED, without a
-    score, when no sample completed.
+    An aggregate is COMPLETED when every sample completed. It is
+    PARTIAL when some samples completed and others failed or were
+    skipped; its score comes from the completed samples only. It is FAILED,
+    without a score, when no sample completed.
     """
 
     COMPLETED = "completed"
+    PARTIAL = "partial"
     FAILED = "failed"
+
+
+def _status_for(succeeded_count: int, total_count: int) -> EvaluationStatus:
+    """The aggregate status for ``succeeded_count`` of ``total_count`` samples."""
+    if succeeded_count == total_count:
+        return EvaluationStatus.COMPLETED
+    if succeeded_count:
+        return EvaluationStatus.PARTIAL
+    return EvaluationStatus.FAILED
 
 
 @dataclass(frozen=True)
@@ -305,7 +316,8 @@ class AggregationResult:
             raise ValueError("coverage must equal succeeded_count / total_count")
         object.__setattr__(self, "coverage", normalized_coverage)
 
-        if self.method == "prf" and self.status is EvaluationStatus.COMPLETED:
+        scored = self.status is not EvaluationStatus.FAILED
+        if self.method == "prf" and scored:
             if self.values is None:
                 raise ValueError("completed prf aggregation requires values")
             if not isinstance(self.values, dict):
@@ -315,15 +327,24 @@ class AggregationResult:
         elif self.values is not None:
             raise ValueError("values are allowed only for a completed prf aggregation")
 
-        if self.status is EvaluationStatus.COMPLETED:
+        if scored:
             object.__setattr__(self, "score", _validate_score(self.score))
-            if self.succeeded_count == 0:
-                raise ValueError("completed aggregation requires a completed sample")
-            return
-
-        if self.score is not None:
+        elif self.score is not None:
             raise ValueError("failed aggregation cannot contain a score")
-        if self.succeeded_count:
+
+        if self.status is EvaluationStatus.COMPLETED:
+            if self.succeeded_count != self.total_count:
+                raise ValueError(
+                    "completed aggregation requires every sample to complete"
+                )
+        elif self.status is EvaluationStatus.PARTIAL:
+            if self.succeeded_count == 0:
+                raise ValueError("partial aggregation requires a completed sample")
+            if self.succeeded_count == self.total_count:
+                raise ValueError(
+                    "partial aggregation requires a sample that did not complete"
+                )
+        elif self.succeeded_count:
             raise ValueError("failed aggregation requires no completed sample")
 
     def _validate_denominator(self) -> None:
@@ -394,7 +415,8 @@ def aggregate(
 ) -> AggregationResult:
     """Aggregate the completed samples of ``results`` with ``spec``.
 
-    The aggregate is FAILED, without a score, when no sample completed.
+    The aggregate is COMPLETED when every sample completed, PARTIAL
+    when only some did, and FAILED, without a score, when none did.
     """
     if spec.method == "prf":
         return _aggregate_prf(results, spec)
@@ -420,9 +442,9 @@ def _aggregate_numeric(
     succeeded_count = len(completed)
     coverage = succeeded_count / total_count
 
-    status = EvaluationStatus.COMPLETED if completed else EvaluationStatus.FAILED
+    status = _status_for(succeeded_count, total_count)
     candidate_score, denominator = _reduce_successful(completed, spec)
-    score = candidate_score if status is EvaluationStatus.COMPLETED else None
+    score = None if status is EvaluationStatus.FAILED else candidate_score
 
     return AggregationResult(
         method=spec.method,
@@ -494,10 +516,8 @@ def _aggregate_prf(
     succeeded_count = len(completed)
     coverage = succeeded_count / total_count
 
-    status = EvaluationStatus.COMPLETED if completed else EvaluationStatus.FAILED
-    values = (
-        _prf_values(completed, spec) if status is EvaluationStatus.COMPLETED else None
-    )
+    status = _status_for(succeeded_count, total_count)
+    values = None if status is EvaluationStatus.FAILED else _prf_values(completed, spec)
 
     return AggregationResult(
         method=spec.method,

@@ -28,12 +28,6 @@ from metric_library import (
     EvaluationStatus,
     SampleStatus,
 )
-from metric_library import (
-    EvaluationConfiguration,
-    EvaluationSample,
-    EvaluationStatus,
-    SampleStatus,
-)
 from metric_library.core.bedrock_client import BedrockClient
 from metric_library.core.data import DataType, Modality
 from metric_library.core.data.text_data import TextData
@@ -594,7 +588,7 @@ class TestJudgeFailures:
             client_factory=factory,
         )
 
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == 0.2
         assert _statuses(result) == (
             SampleStatus.COMPLETED,
@@ -628,7 +622,7 @@ class TestJudgeFailures:
             client_factory=factory,
         )
 
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == 0.2
         assert _statuses(result) == (
             SampleStatus.COMPLETED,
@@ -762,7 +756,7 @@ class TestOtherMetricsShareTheComposition:
         )
 
         # The completed sample gives the score; the failed one keeps its error.
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == 0.2
         assert _statuses(result) == (SampleStatus.COMPLETED, SampleStatus.FAILED)
         assert result.samples[0].score == 0.2

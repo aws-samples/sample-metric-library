@@ -608,10 +608,12 @@ keys; with `--omit-reasoning`, `reasoning` is `null`.
   after its retries does. With `"continue"`, the default, that sample is
   FAILED, its `result.samples[i].error` holds the error message and
   `error_category` its kind, such as `bedrock:ThrottlingException`, and the
-  other samples are still scored. The metric is COMPLETED, and
-  `result.score` comes from its completed samples only, whatever their
-  share; only when no sample completed is `result.status`
-  `EvaluationStatus.FAILED` and `result.score` `None`. The scoring stops
+  other samples are still scored. `result.status` is
+  `EvaluationStatus.PARTIAL`, and `result.score` comes from its
+  completed samples only, whatever their share; only when no sample
+  completed is `result.status` `EvaluationStatus.FAILED` and `result.score`
+  `None`. `EvaluationStatus.COMPLETED` always means that every sample
+  completed. The scoring stops
   early, and the samples it has not scored are SKIPPED, only when a sample
   fails with an error that every later sample would hit too: the Bedrock
   error codes `ExpiredTokenException`, `UnrecognizedClientException`,
@@ -629,13 +631,14 @@ keys; with `--omit-reasoning`, `reasoning` is `null`.
 
   With `"stop"`, the first sample that fails, whatever its error, stops the
   scoring, as in 0.1.0: that sample is FAILED and every later sample is
-  SKIPPED. Unlike 0.1.0, the earlier samples give the metric its score; the
-  metric is FAILED only when its first sample failed. In both modes, leaving
-  the failed and skipped samples out can bias the score, as they may not be a
-  random part of the data: the longest inputs, for example, are the ones a
-  judge call is most likely to time out on. When every sample must count,
-  check that `result.aggregate.coverage` is `1.0`; the runner exits with `2`
-  when a metric leaves samples out.
+  SKIPPED. Unlike 0.1.0, the earlier samples give the metric its score, and
+  the metric is PARTIAL; it is FAILED only when its first sample
+  failed. In both modes, leaving the failed and skipped samples out can bias
+  the score, as they may not be a random part of the data: the longest
+  inputs, for example, are the ones a judge call is most likely to time out
+  on. When every sample must count, check that `result.status` is
+  `EvaluationStatus.COMPLETED`; the runner exits with `2` when a metric
+  leaves samples out.
 - **Degenerate pairs.** For `Accuracy`, a pair whose prediction and reference
   are both empty (or that has no labels) scores `1.0`, and that score counts
   in the aggregate. A pair with one empty side scores `0.0`. The labels
@@ -949,19 +952,6 @@ Rules for authors:
 - `compute` takes one sample, not the dataset. A metric written for the old
   `compute(predictions, references, *args)` signature instantiates but fails
   its first sample with `'EvaluationSample' object is not iterable`.
-- `thread_safe = True` lets the engine score up to `max_workers` samples at
-  the same time (4 by default; `--max-workers` on the runner), calling
-  `compute` of one instance from several threads. Set it only when `compute`
-  keeps per-sample values in local variables, guards any change to shared
-  state, such as a counter or a cache, with a lock, and gives each sample a
-  score that does not depend on the other samples. Without it the metric is
-  scored one sample at a time. Threads help only when `compute` waits on
-  Bedrock or on code that releases the GIL, such as image decoding; for
-  pure-Python `compute` they only add overhead. A value other than `True` or
-  `False` fails the metric before scoring. A subclass of `LLMMetric` inherits
-  `True`, except one that defines `compute` or `compute_matrix` without
-  setting `thread_safe` in the same class: it gets `False`, and its class
-  definition emits a `UserWarning`.
 - `thread_safe = True` lets the engine score up to `max_workers` samples at
   the same time (4 by default; `--max-workers` on the runner), calling
   `compute` of one instance from several threads. Set it only when `compute`
@@ -1371,6 +1361,7 @@ result has this shape:
   "status": "completed",
   "data": {
     "results": {"Accuracy": 0.67},
+    "status": {"Accuracy": "completed"},
     "coverage": {"Accuracy": {"succeeded": 3, "failed": 0, "skipped": 0, "coverage": 1.0}},
     "samples": {
       "Accuracy": [
@@ -1413,7 +1404,7 @@ result has this shape:
   `metrics` when the run stopped before it resolved the metric configuration.
 
 Standard output carries a summary of that envelope: the same `ok`, `status`,
-`data.results`, `data.coverage` and `errors`, without `data.samples` and
+`data.results`, `data.status`, `data.coverage` and `errors`, without `data.samples` and
 `meta`, plus `output_path`, the file that holds the full envelope. The per-sample list grows with the record
 count (about 500 KB for 1,000 records and three metrics), and agents that read
 the shell output would lose the results to truncation. `--stdout full` prints
@@ -1425,6 +1416,7 @@ the file envelope instead.
   "status": "completed",
   "data": {
     "results": {"Accuracy": 0.67},
+    "status": {"Accuracy": "completed"},
     "coverage": {"Accuracy": {"succeeded": 3, "failed": 0, "skipped": 0, "coverage": 1.0}}
   },
   "errors": [],
@@ -1453,6 +1445,7 @@ float and `TextExactMatch`, the `prf` entry, as an object:
         }
       }
     },
+    "status": {"Accuracy": "completed", "TextExactMatch": "completed"},
     "coverage": {
       "Accuracy": {"succeeded": 3, "failed": 0, "skipped": 0, "coverage": 1.0},
       "TextExactMatch": {"succeeded": 3, "failed": 0, "skipped": 0, "coverage": 1.0}
@@ -1487,6 +1480,11 @@ several samples at a time, advice comes before the failed sample, such as
 samples scored at a time (see Concurrency under [LLM Metrics](#llm-metrics)).
 With `stop`, a metric fails only when its first sample failed, and reports
 `sample 1: <message>`.
+`data.status[name]`, for every metric of `--metrics`, in that order, is
+`completed` when every sample completed, `partial` when the metric has a score
+from only some of its samples, and `failed` when it has no score: none of its
+samples completed, or it failed before scoring. These are the values of
+`EvaluationStatus`.
 `data.coverage[name]`, for each metric with `data.samples`, counts its
 `succeeded`, `failed` and `skipped` samples, and `coverage` is the share that
 succeeded.
@@ -1514,15 +1512,15 @@ keeps its list, so the failed sample and the skipped ones are visible.
 
 | Status | `ok` | Exit code | Meaning |
 | --- | --- | --- | --- |
-| `completed` | `true` | `0` | Every selected metric completed, and so did every sample of each. |
-| `partial` | `false` | `2` | At least one metric completed, and at least one failed or has samples that did not complete. Successful and failed metric results are both retained in `data.results`. |
-| `failed` | `false` | `1` | No selected metric completed, or the runner failed before metric execution or while persisting its envelope. |
+| `completed` | `true` | `0` | Every metric in `data.status` is `completed`. |
+| `partial` | `false` | `2` | At least one metric is `completed` or `partial`, and at least one is not `completed`: for example one `partial` metric and one `failed` metric. Successful and failed metric results are both retained in `data.results`. |
+| `failed` | `false` | `1` | Every metric in `data.status` is `failed`, or the runner failed before metric execution or while persisting its envelope. |
 
 For a partial or all-metric failure, `data.results` retains the result map and
 `errors` contains one `"<metric>: <message>"` entry per failed metric, and one
 entry such as `"LLMCorrectness: 12 of 1000 samples failed (coverage 0.988)"`
-per completed metric whose score leaves out samples, in `--metrics` order.
-The entry of a completed metric ends with the same advice as a failed one when
+per `partial` metric, in `--metrics` order.
+The entry of a `partial` metric ends with the same advice as a failed one when
 Bedrock throttled its failed samples. A
 message longer than 500 characters keeps its first 488 and ends with
 ` [truncated]`, in every error field of the envelope. For a
@@ -1625,7 +1623,7 @@ python -m metric_library.run_metrics --list-metrics --format table
 - `get_metric(name)` - Get metric instance by name
 - `is_registered(name)` - Check if metric exists
 - `list_metrics(names=None) -> list[dict]` - One entry per registered metric (`name`, `kind`, `modalities`, `reference`, `prompt`, `context`, `default_aggregation_method`, `description`), from class attributes and without instantiating a metric; `names` filters and orders, an unknown name raises `KeyError`. The runner's `--list-metrics` prints this list.
-- `compute_metric(name, predictions, references, context=None, prompts=None, *, configuration=None, client_factory=None, sleeper=None) -> MetricEvaluationResult` - Evaluate one metric through the engine; the result is COMPLETED or FAILED
+- `compute_metric(name, predictions, references, context=None, prompts=None, *, configuration=None, client_factory=None, sleeper=None) -> MetricEvaluationResult` - Evaluate one metric through the engine; the result is COMPLETED, PARTIAL or FAILED
 - `batch_compute(metrics, predictions, references, context=None, prompts=None, *, configuration=None, client_factory=None, sleeper=None) -> dict[str, MetricEvaluationResult | MetricError]` - Evaluate several metrics on the same inputs; a `MetricError` records an exception that `compute_metric` raised for that name
 - `shared_bedrock_profile` - Class attribute, `str | None`, default `None`. The AWS profile of the shared embedding client of the semantic match metrics; `None` means the boto3 default chain. The runner sets it from `--aws-profile`. Set it before the first semantic match metric is created, because the client is cached on the class.
 
@@ -1657,10 +1655,11 @@ adds `compute_matrix`.
 
 Exported from `metric_library` and `metric_library.core.aggregation`. Each
 aggregator takes a sequence of `SampleResult` and returns an
-`AggregationResult`. The result is COMPLETED when at least one sample
-completed, and its score comes from the completed samples only; it is FAILED,
-without a score, when none completed. The engine aggregates this way with
-either `on_sample_error`.
+`AggregationResult`. The result is COMPLETED when every sample completed, and
+PARTIAL when some samples completed and others failed or were
+skipped; in both cases its score comes from the completed samples only. It is
+FAILED, without a score, when none completed. The engine aggregates this way
+with either `on_sample_error`.
 
 - `numeric_mean(results)` - Arithmetic mean of the completed scores (the default)
 - `weighted_mean(results, weights)` - Weighted mean; `weights` are strictly positive and align one-for-one with the samples
@@ -1697,8 +1696,8 @@ raised no exception. Exported from `metric_library`.
 
 - `metric_name` - The metric's `name`
 - `samples` - Tuple of `SampleResult`, one per input pair, in input order
-- `aggregate` - The `AggregationResult` of the resolved aggregator. `aggregate.values` holds the precision-recall-F1 object (`threshold`, `precision`, `recall`, `f1`, `per_class`, and `by_threshold` with two or more thresholds) for a completed `prf` aggregation, else `None`
-- `status` - Property; `EvaluationStatus.COMPLETED` or `EvaluationStatus.FAILED`, read from the aggregate
+- `aggregate` - The `AggregationResult` of the resolved aggregator. `aggregate.values` holds the precision-recall-F1 object (`threshold`, `precision`, `recall`, `f1`, `per_class`, and `by_threshold` with two or more thresholds) for a completed or partial `prf` aggregation, else `None`
+- `status` - Property, read from the aggregate: `EvaluationStatus.COMPLETED` (`"completed"`) when every sample completed, `EvaluationStatus.PARTIAL` (`"partial"`) when some samples completed and others failed or were skipped, or `EvaluationStatus.FAILED` (`"failed"`) when none completed
 - `score` - Property; the aggregate score as a float (the F1 at the first threshold for a `prf` aggregate), or `None` when the status is FAILED
 
 ### SampleResult
@@ -1789,7 +1788,7 @@ Version 0.2.0 replaces the two computation paths of 0.1.0 with one engine. These
 44. **Output file.** The runner writes the `--output-path` envelope to a new file in the same folder and then moves it into place. The file gets mode 0600 (only its owner can read it), also when it replaces an existing file; a symbolic link at that path is replaced instead of followed; and a failed write leaves the earlier file as it was. Writing needs permission to create files in that folder, and an existing file is replaced even when it is read-only. A path in `/dev` or `/dev/fd`, such as `/dev/null`, `/dev/stdout` or a process substitution, is written in place, and so is a character device or a named pipe that the user owns and that is not itself a symbolic link. Before, the file was written in place: a new file got the mode of the umask, usually 0644, an existing file kept its mode, and a symbolic link was followed.
 45. **Judge client timeouts and retries.** The Bedrock client waits up to 600 seconds for a reply, and boto3 sends each request at most 3 times, in its adaptive retry mode, which spaces out the client's requests once Bedrock throttles one, whatever `AWS_MAX_ATTEMPTS`, `AWS_RETRY_MODE` or the AWS config file say; the engine's attempts come on top (see Retries under [LLM Metrics](#llm-metrics)). To retry more, raise `max_attempts` of `EvaluationConfiguration`, at most 10; the runner has no option for it. Before, boto3's defaults applied: a read timeout of 60 seconds and up to 5 requests in its legacy retry mode, which those settings could change.
 46. **Concurrent scoring.** The engine scores up to 4 samples of a metric at the same time (`max_workers` of `EvaluationConfiguration`, `--max-workers` on the runner, from 1 to 32) when the metric's class sets `thread_safe = True`, as every LLM metric and the two semantic match metrics do; the other built-in metrics are scored one sample at a time, as before. The order of the results does not change, but with `on_sample_error="stop"` (item 47), samples after a failed one may already have made judge calls whose results are SKIPPED, and the log lines of different samples interleave. A custom `Metric` subclass keeps scoring one sample at a time until it sets `thread_safe = True`; a custom `LLMMetric` subclass that keeps state in an override sets `thread_safe = False`. A test whose mocked client answers in call order needs `max_workers=1`. The Bedrock client keeps up to 32 connections open, where botocore keeps 10. Before, the engine scored one sample at a time.
-47. **Failed samples.** A sample that still fails after its retries no longer stops its metric (`on_sample_error="continue"` of `EvaluationConfiguration`, the default; `--on-sample-error` on the runner). The other samples are still scored, and the metric gets the score of its completed samples, however few; it fails only when none completed. The metric stops early, and the samples it has not scored are SKIPPED, only on an error that every later sample would hit too, such as expired credentials or a denied model (see Sample failures under [Evaluating a metric](#evaluating-a-metric)). A run in which a metric leaves out failed samples exits with `2`, and `errors` gains an entry for that metric, such as `LLMCorrectness: 12 of 1000 samples failed (coverage 0.988)`. A failed metric reports `no sample completed: <counts>; sample <id>: <message>` instead of `sample <id>: <message>`. When Bedrock throttled failed samples of a metric scored several samples at a time, both messages add advice to lower `--max-workers` (see Concurrency under [LLM Metrics](#llm-metrics)). The envelope gains `data.coverage`, with the `succeeded`, `failed` and `skipped` counts and the `coverage` of each metric, and `SampleResult` and each `data.samples` entry gain `error_category`. Each failed sample logs its id, metric and error category at WARNING, and a metric with failed samples then logs one line with its completed samples, its failed ones by error category and its skipped ones, such as `LLMCorrectness: 6 of 20 samples completed, 2 failed (bedrock:ValidationException 1, bedrock:AccessDeniedException 1), 12 skipped; the score comes from the completed samples`, or `...; the metric failed` when none completed. The aggregators `numeric_mean`, `weighted_mean`, `median`, `quantile` and `prf` score the completed samples and fail only when none completed, where a failed sample failed them before. `MetricEvaluationResult` and the aggregators no longer check the fail-fast order of the samples; `validate_fail_fast_sequence` is still exported. `on_sample_error="stop"`, and `--on-sample-error stop`, stop the metric at its first failed sample, as 0.1.0 did, but keep the score of the samples before it; the metric fails only when its first sample fails. Before, the first failed sample stopped its metric and failed it, so one sample could fail a run of thousands.
+47. **Failed samples.** A sample that still fails after its retries no longer stops its metric (`on_sample_error="continue"` of `EvaluationConfiguration`, the default; `--on-sample-error` on the runner). The other samples are still scored, and the metric gets the score of its completed samples, however few; it fails only when none completed. `EvaluationStatus` gains `PARTIAL` (`"partial"`) for a metric with a score from only some of its samples; `COMPLETED` still means that every sample completed, as in 0.1.0. The metric stops early, and the samples it has not scored are SKIPPED, only on an error that every later sample would hit too, such as expired credentials or a denied model (see Sample failures under [Evaluating a metric](#evaluating-a-metric)). A run in which a metric leaves out failed samples exits with `2`, and `errors` gains an entry for that metric, such as `LLMCorrectness: 12 of 1000 samples failed (coverage 0.988)`. A failed metric reports `no sample completed: <counts>; sample <id>: <message>` instead of `sample <id>: <message>`. When Bedrock throttled failed samples of a metric scored several samples at a time, both messages add advice to lower `--max-workers` (see Concurrency under [LLM Metrics](#llm-metrics)). The envelope gains `data.status`, the `completed`, `partial` or `failed` status of each metric, and `data.coverage`, with the `succeeded`, `failed` and `skipped` counts and the `coverage` of each metric, and `SampleResult` and each `data.samples` entry gain `error_category`. Each failed sample logs its id, metric and error category at WARNING, and a metric with failed samples then logs one line with its completed samples, its failed ones by error category and its skipped ones, such as `LLMCorrectness: 6 of 20 samples completed, 2 failed (bedrock:ValidationException 1, bedrock:AccessDeniedException 1), 12 skipped; the score comes from the completed samples`, or `...; the metric failed` when none completed. The aggregators `numeric_mean`, `weighted_mean`, `median`, `quantile` and `prf` score the completed samples, are PARTIAL when some samples did not complete, and fail only when none completed, where a failed sample failed them before. `MetricEvaluationResult` and the aggregators no longer check the fail-fast order of the samples; `validate_fail_fast_sequence` is still exported. `on_sample_error="stop"`, and `--on-sample-error stop`, stop the metric at its first failed sample, as 0.1.0 did, but keep the score of the samples before it, with the status PARTIAL; the metric fails only when its first sample fails. Before, the first failed sample stopped its metric and failed it, so one sample could fail a run of thousands.
 
 ## Security
 

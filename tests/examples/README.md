@@ -233,6 +233,7 @@ shows the same envelope without `data.samples` and with `output_path`:
         }
       }
     },
+    "status": {"Accuracy": "completed"},
     "coverage": {"Accuracy": {"succeeded": 10, "failed": 0, "skipped": 0, "coverage": 1.0}},
     "samples": {
       "Accuracy": [
@@ -282,15 +283,19 @@ shows the same envelope without `data.samples` and with `output_path`:
   gives the mean accuracy (`0.8` on the intent file) and the median
   `TextExactMatch` score (`1.0`). `--matcher` aligns with `--metrics` in the
   same way.
+- `data.status[metric]` is `completed` when every sample of the metric
+  completed, `partial` when its score comes from only some of its samples,
+  and `failed` when it has no score.
 - `data.coverage[metric]` counts the `succeeded`, `failed` and `skipped`
   samples of the metric, and `coverage` is the share that succeeded.
 - `status` and the exit code summarize the run: `completed` / 0 when every
-  metric completed with every sample, `partial` / 2 when some metrics
-  completed and some did not or left out failed samples, `failed` / 1 when
-  none completed or the runner stopped before the metrics. `errors` lists one
+  metric is `completed`, `partial` / 2 when at least one metric has a score
+  and at least one is not `completed` (one `partial` metric and one `failed`
+  one, for example), `failed` / 1 when every metric is `failed` or the runner
+  stopped before the metrics. `errors` lists one
   `"<metric>: <message>"` entry per failed metric, and one such as
-  `"Accuracy: 1 of 10 samples failed (coverage 0.9)"` per completed metric
-  with failed samples.
+  `"Accuracy: 1 of 10 samples failed (coverage 0.9)"` per `partial`
+  metric.
 - When a sample of a metric fails, it is `failed` with its message, and the
   other samples are still scored. The metric keeps the score of its completed
   samples, however few; when none completed, the metric result becomes

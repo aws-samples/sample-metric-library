@@ -1100,7 +1100,7 @@ def main():
             )
             if isinstance(values[name], MetricError):
                 metric_errors.append(f"{name}: {values[name]['error']}")
-            elif result.aggregate.coverage < 1.0:
+            elif result.status is EvaluationStatus.PARTIAL:
                 entry = (
                     f"{name}: {_failure_counts(result.aggregate)} "
                     f"(coverage {_coverage_text(result.aggregate)})"
@@ -1108,13 +1108,27 @@ def main():
                 if advice is not None:
                     entry = f"{entry}; {advice}"
                 metric_errors.append(entry)
-        scored_count = sum(
-            not isinstance(value, MetricError) for value in values.values()
-        )
-        if not metric_errors:
+        # The status of each metric: completed, partial or failed. A metric
+        # that raised before scoring, or whose samples all failed, is failed.
+        metric_statuses = {
+            name: (
+                EvaluationStatus.FAILED.value
+                if isinstance(values[name], MetricError)
+                else result.status.value
+            )
+            for name, result in results.items()
+        }
+        # The run is completed when every metric is, failed when none has a
+        # score, and partial otherwise.
+        if all(
+            value == EvaluationStatus.COMPLETED.value
+            for value in metric_statuses.values()
+        ):
             status = "completed"
             exit_code = 0
-        elif scored_count:
+        elif any(
+            value != EvaluationStatus.FAILED.value for value in metric_statuses.values()
+        ):
             status = "partial"
             exit_code = 2
         else:
@@ -1124,7 +1138,12 @@ def main():
         output = {
             "ok": status == "completed",
             "status": status,
-            "data": {"results": values, "coverage": coverage, "samples": samples},
+            "data": {
+                "results": values,
+                "status": metric_statuses,
+                "coverage": coverage,
+                "samples": samples,
+            },
             "errors": metric_errors,
             "meta": meta,
         }

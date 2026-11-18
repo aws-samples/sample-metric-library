@@ -357,8 +357,12 @@ class TestEndToEnd:
         )
         assert result.returncode == 0, result.stderr
         output = _full_output(result, output_path)
-        assert set(output["data"]) == {"results", "coverage", "samples"}
+        assert set(output["data"]) == {"results", "status", "coverage", "samples"}
         assert set(output["data"]["samples"]) == set(output["data"]["results"])
+        assert output["data"]["status"] == {
+            "Accuracy": "completed",
+            "TextExactMatch": "completed",
+        }
         assert output["data"]["coverage"] == {
             name: {"succeeded": 3, "failed": 0, "skipped": 0, "coverage": 1.0}
             for name in ("Accuracy", "TextExactMatch")
@@ -3130,10 +3134,6 @@ class TestJudgeImageFormats:
                 # are judged one at a time.
                 "--max-workers",
                 "1",
-                # The tests read the judge log in record order, so the records
-                # are judged one at a time.
-                "--max-workers",
-                "1",
             ],
             cwd=str(tmp_path),
             env={"JUDGE_LOG": str(log_path), "SAVE_LOG": str(tmp_path / "saves.log")},
@@ -3670,14 +3670,14 @@ class TestStdoutOption:
         printed = json.loads(result.stdout)
         assert set(printed) == STDOUT_KEYS
         assert printed["output_path"] == str(output_path)
-        assert set(printed["data"]) == {"results", "coverage"}
+        assert set(printed["data"]) == {"results", "status", "coverage"}
         assert printed["data"]["results"] == {
             "Accuracy": pytest.approx(2 / 3),
             "TextExactMatch": pytest.approx(2 / 3),
         }
         full = json.loads(output_path.read_text())
         assert set(full) == ENVELOPE_KEYS
-        assert set(full["data"]) == {"results", "coverage", "samples"}
+        assert set(full["data"]) == {"results", "status", "coverage", "samples"}
         assert len(full["data"]["samples"]["Accuracy"]) == 3
         assert printed == _summary_of(full, output_path)
 
@@ -4803,7 +4803,7 @@ class TestOnSampleErrorOption:
         records_path = tmp_path / "records.json"
         output_path = tmp_path / "result.json"
 
-        def run(*options, bad=(4,)):
+        def run(*options, bad=(4,), metrics="FailsOnBad"):
             records_path.write_text(
                 json.dumps(
                     [
@@ -4815,7 +4815,7 @@ class TestOnSampleErrorOption:
             result = _run_evaluation(
                 records_path,
                 output_path,
-                "FailsOnBad",
+                metrics,
                 "--custom-metrics-path",
                 str(plugin_path),
                 *options,
@@ -4833,6 +4833,7 @@ class TestOnSampleErrorOption:
         assert output["status"] == "partial"
         # The score of the 9 completed samples; the failed one does not count.
         assert output["data"]["results"] == {"FailsOnBad": 1.0}
+        assert output["data"]["status"] == {"FailsOnBad": "partial"}
         assert output["data"]["coverage"] == {
             "FailsOnBad": {"succeeded": 9, "failed": 1, "skipped": 0, "coverage": 0.9}
         }
@@ -4869,6 +4870,7 @@ class TestOnSampleErrorOption:
         assert output["status"] == "failed"
         message = "no sample completed: 10 of 10 samples failed; sample 1: bad record"
         assert output["data"]["results"] == {"FailsOnBad": {"error": message}}
+        assert output["data"]["status"] == {"FailsOnBad": "failed"}
         assert output["errors"] == [f"FailsOnBad: {message}"]
         entries = output["data"]["samples"]["FailsOnBad"]
         assert [entry["status"] for entry in entries] == ["failed"] * 10
@@ -4881,6 +4883,7 @@ class TestOnSampleErrorOption:
         output = _full_output(result, output_path)
         assert output["status"] == "partial"
         assert output["data"]["results"] == {"FailsOnBad": 1.0}
+        assert output["data"]["status"] == {"FailsOnBad": "partial"}
         assert output["errors"] == [
             "FailsOnBad: 1 of 10 samples failed and 6 were skipped (coverage 0.3)"
         ]
@@ -4898,16 +4901,63 @@ class TestOnSampleErrorOption:
         assert output["data"]["results"] == {
             "FailsOnBad": {"error": "sample 1: bad record"}
         }
+        assert output["data"]["status"] == {"FailsOnBad": "failed"}
         assert output["errors"] == ["FailsOnBad: sample 1: bad record"]
         entries = output["data"]["samples"]["FailsOnBad"]
         assert [entry["status"] for entry in entries] == ["failed"] + ["skipped"] * 9
 
-    def test_min_coverage_is_not_an_option(self, run):
-        result, output_path = run("--min-coverage", "0.5")
+    @pytest.mark.parametrize(
+        ("metrics", "statuses", "run_status", "returncode"),
+        [
+            pytest.param(
+                "TextExactMatch,FailsOnBad",
+                {"TextExactMatch": "completed", "FailsOnBad": "partial"},
+                "partial",
+                2,
+                id="completed-and-partial",
+            ),
+            pytest.param(
+                "FailsOnBad,LLMCorrectness",
+                {"FailsOnBad": "partial", "LLMCorrectness": "failed"},
+                "partial",
+                2,
+                id="partial-and-failed",
+            ),
+            pytest.param(
+                "TextExactMatch,LLMCorrectness",
+                {"TextExactMatch": "completed", "LLMCorrectness": "failed"},
+                "partial",
+                2,
+                id="completed-and-failed",
+            ),
+        ],
+    )
+    def test_each_metric_reports_its_own_status(
+        self, run, metrics, statuses, run_status, returncode
+    ):
+        # LLMCorrectness needs prompts, so it fails before it scores a sample
+        # and makes no Bedrock call; it has no data.coverage entry.
+        result, output_path = run(metrics=metrics)
 
-        assert result.returncode == 2
-        assert "unrecognized arguments: --min-coverage 0.5" in result.stderr
-        assert not output_path.exists()
+        assert result.returncode == returncode, result.stderr
+        output = _full_output(result, output_path)
+        assert output["status"] == run_status
+        assert output["data"]["status"] == statuses
+        assert list(output["data"]["status"]) == metrics.split(",")
+        assert set(output["data"]["coverage"]) == {
+            name for name in statuses if name != "LLMCorrectness"
+        }
+
+    def test_the_run_fails_when_every_metric_fails(self, run):
+        result, output_path = run(metrics="FailsOnBad,LLMCorrectness", bad=range(1, 11))
+
+        assert result.returncode == 1, result.stderr
+        output = _full_output(result, output_path)
+        assert output["status"] == "failed"
+        assert output["data"]["status"] == {
+            "FailsOnBad": "failed",
+            "LLMCorrectness": "failed",
+        }
 
     def test_an_unknown_on_sample_error_is_an_argparse_error(self, run):
         result, output_path = run("--on-sample-error", "skip")

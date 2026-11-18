@@ -35,11 +35,6 @@ DEFAULT_REGION = "us-east-1"
 # number, so every worker has a connection.
 MAX_POOL_CONNECTIONS = 32
 
-# Connections the client keeps open for reuse; botocore keeps 10. The engine's
-# workers share one client, and MAX_WORKERS_LIMIT in evaluation.py is this
-# number, so every worker has a connection.
-MAX_POOL_CONNECTIONS = 32
-
 
 class BedrockClient:
     """

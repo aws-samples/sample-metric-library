@@ -26,12 +26,16 @@ from botocore.exceptions import (
     ClientError,
     ConnectionClosedError,
     ConnectTimeoutError,
+    CredentialRetrievalError,
     EndpointConnectionError,
     NoCredentialsError,
     ParamValidationError,
     PartialCredentialsError,
     ProfileNotFound,
     ReadTimeoutError,
+    SSOTokenLoadError,
+    TokenRetrievalError,
+    UnauthorizedSSOTokenError,
 )
 
 import metric_library.metrics  # noqa: F401 - registers built-in metrics
@@ -80,6 +84,31 @@ _TERMINAL_CLIENT_ERROR_CODES = (
     "ServiceQuotaExceededException",
 )
 _TEST_ENDPOINT = "https://bedrock-runtime.test"
+# The errors that every later sample would hit too, as the README lists them.
+# With on_sample_error="continue", each one stops the metric.
+_FATAL_CLIENT_ERROR_CODES = (
+    "ExpiredTokenException",
+    "UnrecognizedClientException",
+    "InvalidClientTokenId",
+    "InvalidSignatureException",
+    "IncompleteSignature",
+    "RequestExpired",
+    "AccessDeniedException",
+    "NotAuthorized",
+    "OptInRequired",
+    "FTUFormNotFilled",
+    "MPAgreementBeingCreated",
+    "ResourceNotFoundException",
+)
+_FATAL_EXCEPTIONS = (
+    (NoCredentialsError, {}),
+    (PartialCredentialsError, {"provider": "env", "cred_var": "secret_key"}),
+    (CredentialRetrievalError, {"provider": "sso", "error_msg": "failed"}),
+    (ProfileNotFound, {"profile": "missing-profile"}),
+    (UnauthorizedSSOTokenError, {}),
+    (SSOTokenLoadError, {"error_msg": "failed"}),
+    (TokenRetrievalError, {"provider": "sso", "error_msg": "failed"}),
+)
 
 
 @pytest.fixture(autouse=True)
@@ -272,9 +301,6 @@ class TestRetryConfiguration:
         assert configuration.max_delay == 30.0
         assert configuration.max_workers == DEFAULT_MAX_WORKERS == 4
         assert configuration.on_sample_error == "continue"
-        # Continue mode has no coverage floor and no limit of failures in a row.
-        assert not hasattr(configuration, "min_coverage")
-        assert not hasattr(configuration, "max_consecutive_failures")
 
     @pytest.mark.parametrize(
         ("overrides", "error_type", "message"),
@@ -1043,7 +1069,7 @@ class TestDetailedLLMCorrectnessEvaluation:
             assert sample.score is None
             assert sample.error is None
         # The sample scored before the stop gives the score.
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == 0.2
         assert result.aggregate.total_count == 4
         assert result.aggregate.succeeded_count == 1
@@ -1120,7 +1146,7 @@ class TestDetailedLLMCorrectnessEvaluation:
         assert result.samples[0].score == 0.2
         assert "ThrottlingException" in result.samples[1].error
         assert "once" in result.samples[1].error
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == 0.2
         assert result.aggregate.succeeded_count == 1
         assert result.aggregate.failed_count == 1
@@ -1262,7 +1288,7 @@ class TestMetricEvaluationResultContracts:
         # SKIPPED, wherever it is in the input order.
         aggregate = AggregationResult(
             method="numeric_mean",
-            status=EvaluationStatus.COMPLETED,
+            status=EvaluationStatus.PARTIAL,
             score=0.5,
             total_count=3,
             succeeded_count=1,
@@ -1422,7 +1448,7 @@ class TestAggregationMethodDispatch:
 
         assert client.query.call_count == 4
         sleeper.assert_called_once_with(1.0)
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == pytest.approx(0.65)
         assert result.aggregate.method == "weighted_mean"
         assert result.aggregate.denominator == 4.0
@@ -2365,7 +2391,7 @@ class TestConcurrentScoring:
             assert sample.score is None
             assert sample.error is None
         # Only sample 0, before the reported failure, gives the score.
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == 1.0
         assert result.aggregate.succeeded_count == 1
         assert result.aggregate.failed_count == 1
@@ -2548,9 +2574,9 @@ class TestConcurrentScoring:
         aggregate_samples = evaluation.aggregate_samples
         aggregations = []
 
-        def recording_aggregate(results, spec, **options):
+        def recording_aggregate(results, spec):
             aggregations.append((threading.get_ident(), len(results)))
-            return aggregate_samples(results, spec, **options)
+            return aggregate_samples(results, spec)
 
         monkeypatch.setattr(evaluation, "aggregate_samples", recording_aggregate)
         client_factory, _ = _probe_client(lambda sample: 1.0)
@@ -2701,7 +2727,7 @@ class TestContinueOnSampleError:
         result, scored = self._run(monkeypatch, outcomes)
 
         assert scored == 10
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == pytest.approx((4.5 - 0.3) / 9)
         assert result.aggregate.coverage == 0.9
         assert result.samples[3].status is self.FAILED
@@ -2732,30 +2758,26 @@ class TestContinueOnSampleError:
         result, scored = self._run(monkeypatch, outcomes)
 
         assert scored == 20
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.aggregate.failed_count == 1
 
     @pytest.mark.parametrize(
         ("error", "category"),
         [
-            pytest.param(
-                lambda: _client_error("ExpiredTokenException"),
-                "bedrock:ExpiredTokenException",
-                id="expired-token",
-            ),
-            pytest.param(
-                lambda: _client_error("AccessDeniedException"),
-                "bedrock:AccessDeniedException",
-                id="access-denied",
-            ),
-            pytest.param(
-                lambda: _client_error("ResourceNotFoundException"),
-                "bedrock:ResourceNotFoundException",
-                id="unknown-model",
-            ),
-            pytest.param(
-                NoCredentialsError, "exception:NoCredentialsError", id="no-credentials"
-            ),
+            *[
+                pytest.param(
+                    lambda code=code: _client_error(code), f"bedrock:{code}", id=code
+                )
+                for code in _FATAL_CLIENT_ERROR_CODES
+            ],
+            *[
+                pytest.param(
+                    lambda error_type=error_type, kwargs=kwargs: error_type(**kwargs),
+                    f"exception:{error_type.__name__}",
+                    id=error_type.__name__,
+                )
+                for error_type, kwargs in _FATAL_EXCEPTIONS
+            ],
         ],
     )
     def test_an_error_that_every_later_sample_would_hit_stops_the_metric(
@@ -2774,7 +2796,7 @@ class TestContinueOnSampleError:
         ]
         assert result.samples[3].error_category == category
         # The 3 samples scored before the stop give the score.
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == 0.5
         assert result.aggregate.coverage == 3 / 20
         assert self._messages(caplog)[-2:] == [
@@ -2782,6 +2804,12 @@ class TestContinueOnSampleError:
             f"SequenceMetric: 3 of 20 samples completed, 1 failed ({category} 1), "
             "16 skipped; the score comes from the completed samples",
         ]
+
+    def test_the_stopping_errors_are_the_documented_ones(self):
+        assert evaluation._FATAL_CLIENT_ERROR_CODES == set(_FATAL_CLIENT_ERROR_CODES)
+        assert set(evaluation._FATAL_EXCEPTIONS) == {
+            error_type for error_type, _ in _FATAL_EXCEPTIONS
+        }
 
     def test_a_stop_before_any_completed_sample_fails_the_metric(self, monkeypatch):
         outcomes = [_client_error("AccessDeniedException")] + [0.5] * 9
@@ -2821,7 +2849,7 @@ class TestContinueOnSampleError:
 
         assert scored == len(outcomes)
         assert self.SKIPPED not in [sample.status for sample in result.samples]
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == pytest.approx(0.5)
         assert result.aggregate.coverage == coverage
         assert self._stops(caplog) == []
@@ -2866,7 +2894,7 @@ class TestContinueOnSampleError:
         )
 
         assert client.score.call_count == 20
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == 1.0
         assert result.aggregate.failed_count == 12
         assert self._stops(caplog) == []
@@ -2885,7 +2913,7 @@ class TestContinueOnSampleError:
             self.FAILED,
             *[self.SKIPPED] * 16,
         ]
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == pytest.approx(0.5)
         assert result.aggregate.coverage == 3 / 20
 
@@ -2920,7 +2948,7 @@ class TestContinueOnSampleError:
         )
 
         assert client.score.call_count == 20
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert [sample.ordinal for sample in result.samples if sample.error] == [2]
 
     def test_a_stop_keeps_the_result_of_a_later_sample_in_flight(self, monkeypatch):
@@ -2929,13 +2957,23 @@ class TestContinueOnSampleError:
         # kept, where stop mode would skip it; no other sample starts.
         _register(monkeypatch, ProbeMetric)
         calling = threading.Event()
+        stopped = threading.Event()
+        stop_all = evaluation._Cutoff.stop_all
+
+        def recording_stop_all(self):
+            stop_all(self)
+            stopped.set()
+
+        monkeypatch.setattr(evaluation._Cutoff, "stop_all", recording_stop_all)
 
         def score(sample):
             if sample.ordinal == 0:
                 calling.wait(timeout=10)
                 raise _client_error("AccessDeniedException")
             calling.set()
-            time.sleep(0.2)  # the engine stops the metric meanwhile
+            # Return only once the engine has stopped the metric, so a worker
+            # cannot be free for sample 2 before the stop.
+            assert stopped.wait(timeout=10)
             return 1.0
 
         client_factory, client = _probe_client(score)

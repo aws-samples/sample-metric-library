@@ -540,7 +540,7 @@ class TestNumericMean:
 
         result = numeric_mean(results)
 
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == 0.2
         assert result.coverage == 0.25
         _assert_counts(result, total=4, succeeded=1, failed=1, skipped=2)
@@ -574,7 +574,7 @@ class TestNumericMean:
 
         result = numeric_mean(results)
 
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == 0.5
         assert result.denominator == 2
         _assert_counts(result, total=4, succeeded=2, failed=1, skipped=1)
@@ -676,34 +676,95 @@ class TestAggregationResultContracts:
 
         assert result.failed_count == 2
 
-    def test_completed_status_requires_a_completed_sample(self):
-        with pytest.raises(ValueError, match="requires a completed sample"):
-            AggregationResult(
-                method="numeric_mean",
-                status=EvaluationStatus.COMPLETED,
-                score=0.5,
-                total_count=2,
-                succeeded_count=0,
-                failed_count=1,
-                skipped_count=1,
-                denominator=0,
-                coverage=0.0,
-            )
-
-    def test_completed_status_accepts_failed_samples(self):
-        result = AggregationResult(
+    @staticmethod
+    def _scored_aggregate(status, succeeded_count, failed_count, skipped_count):
+        total_count = succeeded_count + failed_count + skipped_count
+        return AggregationResult(
             method="numeric_mean",
-            status=EvaluationStatus.COMPLETED,
+            status=status,
             score=0.5,
-            total_count=4,
-            succeeded_count=1,
-            failed_count=2,
-            skipped_count=1,
-            denominator=1,
-            coverage=0.25,
+            total_count=total_count,
+            succeeded_count=succeeded_count,
+            failed_count=failed_count,
+            skipped_count=skipped_count,
+            denominator=succeeded_count,
+            coverage=succeeded_count / total_count,
         )
 
-        assert result.status is EvaluationStatus.COMPLETED
+    @pytest.mark.parametrize(
+        ("succeeded_count", "failed_count", "skipped_count"),
+        [
+            pytest.param(0, 1, 1, id="none-completed"),
+            pytest.param(1, 2, 1, id="some-completed"),
+            pytest.param(3, 0, 1, id="one-skipped"),
+        ],
+    )
+    def test_completed_status_requires_every_sample_to_complete(
+        self, succeeded_count, failed_count, skipped_count
+    ):
+        with pytest.raises(ValueError, match="requires every sample to complete"):
+            self._scored_aggregate(
+                EvaluationStatus.COMPLETED, succeeded_count, failed_count, skipped_count
+            )
+
+    @pytest.mark.parametrize(
+        ("succeeded_count", "failed_count", "skipped_count", "message"),
+        [
+            pytest.param(0, 1, 1, "requires a completed sample", id="none-completed"),
+            pytest.param(
+                3, 0, 0, "requires a sample that did not complete", id="all-completed"
+            ),
+        ],
+    )
+    def test_partial_status_requires_some_but_not_all_samples(
+        self, succeeded_count, failed_count, skipped_count, message
+    ):
+        with pytest.raises(ValueError, match=message):
+            self._scored_aggregate(
+                EvaluationStatus.PARTIAL,
+                succeeded_count,
+                failed_count,
+                skipped_count,
+            )
+
+    @pytest.mark.parametrize(
+        ("failed_count", "skipped_count"),
+        [
+            pytest.param(1, 0, id="one-failed"),
+            pytest.param(0, 1, id="one-skipped"),
+            pytest.param(2, 1, id="failed-and-skipped"),
+        ],
+    )
+    def test_partial_status_accepts_a_score_and_missing_samples(
+        self, failed_count, skipped_count
+    ):
+        result = self._scored_aggregate(
+            EvaluationStatus.PARTIAL, 1, failed_count, skipped_count
+        )
+
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.score == 0.5
+
+    def test_partial_status_cannot_lack_a_score(self):
+        with pytest.raises(TypeError, match="score must be a real number"):
+            AggregationResult(
+                method="numeric_mean",
+                status=EvaluationStatus.PARTIAL,
+                score=None,
+                total_count=2,
+                succeeded_count=1,
+                failed_count=1,
+                skipped_count=0,
+                denominator=1,
+                coverage=0.5,
+            )
+
+    def test_the_status_values_are_completed_partial_and_failed(self):
+        assert [status.value for status in EvaluationStatus] == [
+            "completed",
+            "partial",
+            "failed",
+        ]
 
     def test_failed_status_cannot_contain_a_score(self):
         with pytest.raises(ValueError, match="cannot contain a score"):
@@ -819,6 +880,23 @@ class TestAggregationResultContracts:
         result = _prf_aggregate(score=0.5, values={"f1": 0.5})
 
         assert result.status is EvaluationStatus.COMPLETED
+
+    def test_partial_prf_aggregation_requires_values(self):
+        partial = dict(
+            status=EvaluationStatus.PARTIAL,
+            total_count=2,
+            failed_count=1,
+            coverage=0.5,
+        )
+
+        with pytest.raises(
+            ValueError, match="completed prf aggregation requires values"
+        ):
+            _prf_aggregate(**partial)
+        result = _prf_aggregate(**partial, values={"f1": 0.5})
+
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.values == {"f1": 0.5}
         assert result.values == {"f1": 0.5}
         assert result.denominator == result.succeeded_count
         assert type(result.denominator) is int
@@ -965,7 +1043,7 @@ class TestWeightedMean:
 
         result = weighted_mean(results, (1.0, 100.0, 3.0, 100.0))
 
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         assert result.score == (0.2 * 1.0 + 0.8 * 3.0) / 4.0
         assert result.denominator == 4.0
 
@@ -1054,11 +1132,11 @@ class TestMedianAndQuantile:
         top = quantile(results, 1.0)
 
         assert (middle.status, middle.score, middle.denominator) == (
-            EvaluationStatus.COMPLETED,
+            EvaluationStatus.PARTIAL,
             0.5,
             3,
         )
-        assert (top.status, top.score) == (EvaluationStatus.COMPLETED, 0.9)
+        assert (top.status, top.score) == (EvaluationStatus.PARTIAL, 0.9)
 
 
 class TestPrfAggregators:
@@ -1149,7 +1227,7 @@ class TestPrfAggregators:
 
         result = prf(samples)
 
-        assert result.status is EvaluationStatus.COMPLETED
+        assert result.status is EvaluationStatus.PARTIAL
         per_class = result.values["per_class"]
         assert list(per_class) == ["a", "c", "d"]
         # The failed sample is neither a true negative nor any other count.

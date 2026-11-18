@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import math
 import threading
-import threading
 import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -178,14 +177,15 @@ class EvaluationConfiguration:
 
     ``on_sample_error`` sets what a failed sample does. With ``"continue"``,
     the default, the other samples are still scored, and the aggregate is
-    COMPLETED with the score of the completed samples, whatever their share;
-    it is FAILED only when no sample completed. The scoring stops early, and
-    the samples it has not scored are SKIPPED, only when a sample fails with
-    an error that every later sample would hit too, such as expired
-    credentials or a model without access. With ``"stop"``, a sample that
-    fails stops the evaluation: later samples are skipped, and the aggregate
-    is COMPLETED with the score of the earlier samples, or FAILED when the
-    first sample failed.
+    PARTIAL with the score of the completed samples, whatever their
+    share; it is FAILED only when no sample completed. The scoring stops
+    early, and the samples it has not scored are SKIPPED, only when a sample
+    fails with an error that every later sample would hit too, such as
+    expired credentials or a model without access. With ``"stop"``, a sample
+    that fails stops the evaluation: later samples are skipped, and the
+    aggregate is PARTIAL with the score of the earlier samples, or
+    FAILED when the first sample failed. In both modes the aggregate is
+    COMPLETED only when every sample completed.
 
     Retries wait ``min(max_delay, initial_delay * multiplier ** (n - 1))``
     seconds after the ``n``-th failed attempt.
