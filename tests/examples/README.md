@@ -293,10 +293,10 @@ shows the same envelope without `data.samples` and with `output_path`:
   with failed samples.
 - When a sample of a metric fails, it is `failed` with its message, and the
   other samples are still scored. The metric keeps the score of its completed
-  samples when they are at least 0.9 of its records (`--min-coverage`);
-  otherwise the metric result becomes
-  `{"error": "coverage <coverage> is below 0.9: ...; sample <id>: <message>"}`,
-  and the samples it stopped before are `skipped`. With
+  samples, however few; when none completed, the metric result becomes
+  `{"error": "no sample completed: ...; sample <id>: <message>"}`. An error
+  that every later sample would hit too, such as expired credentials, stops
+  the metric, and the samples it stopped before are `skipped`. With
   `--on-sample-error stop`, the first failed sample makes the metric
   `{"error": "sample <id>: <message>"}`, and the later samples are
   `skipped`.
@@ -374,10 +374,10 @@ explanation the judge gave for it.
 
 Transient Bedrock errors are retried (3 attempts, delays of 1 s and 2 s). A
 sample that still fails, or a judge reply outside the expected JSON shape,
-fails that sample. One failed record of five leaves the coverage below 0.9,
-so the metric becomes
-`{"error": "coverage <coverage> is below 0.9: ...; sample <id>: <message>"}`
-and the run `failed`.
+fails that sample. The metric then gets the score of the other four records,
+`errors` gets the entry
+`"LLMCorrectness: 1 of 5 samples failed (coverage 0.8)"`, and the run is
+`partial`.
 Leave out `--prompt-key` and the run stops before the judge with
 `prompts are required for LLMCorrectness`.
 

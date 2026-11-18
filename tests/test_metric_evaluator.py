@@ -58,7 +58,6 @@ from metric_library.core.data import Modality, factory
 from metric_library.core import evaluation
 from metric_library.core.evaluation import (
     DEFAULT_MAX_WORKERS,
-    DEFAULT_MIN_COVERAGE,
     MAX_ATTEMPTS_LIMIT,
     MAX_WORKERS_LIMIT,
     MULTIPLIER_LIMIT,
@@ -273,8 +272,9 @@ class TestRetryConfiguration:
         assert configuration.max_delay == 30.0
         assert configuration.max_workers == DEFAULT_MAX_WORKERS == 4
         assert configuration.on_sample_error == "continue"
-        assert configuration.min_coverage == DEFAULT_MIN_COVERAGE == 0.9
-        assert configuration.max_consecutive_failures == 10
+        # Continue mode has no coverage floor and no limit of failures in a row.
+        assert not hasattr(configuration, "min_coverage")
+        assert not hasattr(configuration, "max_consecutive_failures")
 
     @pytest.mark.parametrize(
         ("overrides", "error_type", "message"),
@@ -332,36 +332,6 @@ class TestRetryConfiguration:
                 ValueError,
                 "on_sample_error must be 'continue' or 'stop'",
                 id="unknown-on-sample-error",
-            ),
-            pytest.param(
-                {"min_coverage": "0.9"},
-                TypeError,
-                "min_coverage must be a real number",
-                id="string-min-coverage",
-            ),
-            pytest.param(
-                {"min_coverage": 0.0},
-                ValueError,
-                "min_coverage must be greater than 0.0 and at most 1.0",
-                id="zero-min-coverage",
-            ),
-            pytest.param(
-                {"min_coverage": float("nan")},
-                ValueError,
-                "min_coverage must be greater than 0.0 and at most 1.0",
-                id="nan-min-coverage",
-            ),
-            pytest.param(
-                {"max_consecutive_failures": 2.0},
-                TypeError,
-                "max_consecutive_failures must be an integer",
-                id="non-integer-max-consecutive-failures",
-            ),
-            pytest.param(
-                {"max_consecutive_failures": 0},
-                ValueError,
-                "max_consecutive_failures must be at least 1",
-                id="zero-max-consecutive-failures",
             ),
             pytest.param(
                 {"initial_delay": None},
@@ -1323,9 +1293,7 @@ class TestAggregationMethodDispatch:
                     aggregation_method="weighted_mean",
                     weights=(1.0, 3.0),
                 ),
-                lambda samples, **options: weighted_mean(
-                    samples, (1.0, 3.0), **options
-                ),
+                lambda samples: weighted_mean(samples, (1.0, 3.0)),
                 0.65,
                 4.0,
                 id="weighted_mean",
@@ -1342,7 +1310,7 @@ class TestAggregationMethodDispatch:
                     aggregation_method="quantile",
                     quantile=0.25,
                 ),
-                lambda samples, **options: quantile(samples, 0.25, **options),
+                lambda samples: quantile(samples, 0.25),
                 0.35,
                 2,
                 id="quantile",
@@ -1365,9 +1333,7 @@ class TestAggregationMethodDispatch:
         assert result.aggregate.method == configuration.aggregation_method
         assert result.aggregate.score == pytest.approx(expected)
         assert result.aggregate.denominator == denominator
-        assert result.aggregate == aggregator(
-            result.samples, min_coverage=DEFAULT_MIN_COVERAGE
-        )
+        assert result.aggregate == aggregator(result.samples)
 
     @pytest.mark.parametrize(
         ("metric_class", "configuration", "expected_method", "aggregator", "expected"),
@@ -1392,7 +1358,7 @@ class TestAggregationMethodDispatch:
                 MedianByDefaultMetric,
                 EvaluationConfiguration(aggregation_method="quantile", quantile=1.0),
                 "quantile",
-                lambda samples, **options: quantile(samples, 1.0, **options),
+                lambda samples: quantile(samples, 1.0),
                 0.9,
                 id="caller-override-beats-metric-default",
             ),
@@ -1421,11 +1387,20 @@ class TestAggregationMethodDispatch:
         assert _scored_ids(client) == ["0", "1", "2"]
         assert result.aggregate.method == expected_method
         assert result.score == pytest.approx(expected)
-        assert result.aggregate == aggregator(
-            result.samples, min_coverage=DEFAULT_MIN_COVERAGE
-        )
+        assert result.aggregate == aggregator(result.samples)
 
-    def test_weighted_failure_reports_completed_weight_mass_without_score(self):
+    @pytest.mark.parametrize(
+        ("on_sample_error", "status", "score"),
+        [
+            pytest.param("continue", EvaluationStatus.COMPLETED, 0.65, id="continue"),
+            pytest.param("stop", EvaluationStatus.FAILED, None, id="stop"),
+        ],
+    )
+    def test_weighted_failure_keeps_the_completed_weight_mass(
+        self, on_sample_error, status, score
+    ):
+        # Continue scores the completed samples, (0.2 * 1 + 0.8 * 3) / 4, and
+        # stop fails the metric at its failed sample; both weigh 4.0.
         client_factory, client = _fake_client(
             [
                 _judge(0.2),
@@ -1439,6 +1414,7 @@ class TestAggregationMethodDispatch:
             aggregation_method="weighted_mean",
             weights=(1.0, 3.0, 100.0),
             max_workers=1,
+            on_sample_error=on_sample_error,
         )
         sleeper = Mock()
 
@@ -1452,8 +1428,8 @@ class TestAggregationMethodDispatch:
 
         assert client.query.call_count == 4
         sleeper.assert_called_once_with(1.0)
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        assert result.status is status
+        assert result.score == (pytest.approx(score) if score else None)
         assert result.aggregate.method == "weighted_mean"
         assert result.aggregate.denominator == 4.0
         assert result.aggregate.coverage == 2 / 3
@@ -1616,9 +1592,7 @@ class TestSampleOutputUnwrapping:
             "support": 2,
         }
         assert result.score == pytest.approx(2 / 3)
-        assert result.aggregate == prf(
-            result.samples, min_coverage=DEFAULT_MIN_COVERAGE
-        )
+        assert result.aggregate == prf(result.samples)
 
 
 class TestItemMatchers:
@@ -2029,10 +2003,7 @@ class TestSampleResultReuse:
             client_factory=client_factory,
         )
 
-        assert (
-            numeric_mean(result.samples, min_coverage=DEFAULT_MIN_COVERAGE)
-            == result.aggregate
-        )
+        assert numeric_mean(result.samples) == result.aggregate
         assert weighted_mean(result.samples, (1.0, 2.0, 3.0)).score == pytest.approx(
             (0.2 + 1.0 + 2.4) / 6.0
         )
@@ -2582,9 +2553,9 @@ class TestConcurrentScoring:
         aggregate_samples = evaluation.aggregate_samples
         aggregations = []
 
-        def recording_aggregate(results, spec):
+        def recording_aggregate(results, spec, **options):
             aggregations.append((threading.get_ident(), len(results)))
-            return aggregate_samples(results, spec)
+            return aggregate_samples(results, spec, **options)
 
         monkeypatch.setattr(evaluation, "aggregate_samples", recording_aggregate)
         client_factory, _ = _probe_client(lambda sample: 1.0)
@@ -2689,16 +2660,17 @@ class TestConcurrentScoring:
 class TestContinueOnSampleError:
     """With ``on_sample_error="continue"``, a failed sample does not stop the metric.
 
-    The metric is COMPLETED when at least ``min_coverage`` of its samples
-    completed, with the score of those samples. The scoring stops early on an
-    error that every later sample would hit too, after
-    ``max_consecutive_failures`` failures in a row, or once ``min_coverage``
-    is out of reach; the samples it did not score are SKIPPED.
+    The metric is COMPLETED with the score of its completed samples, however
+    few, and FAILED only when none completed. The scoring stops early only on
+    an error that every later sample would hit too; the samples it did not
+    score are SKIPPED.
     """
 
     COMPLETED = SampleStatus.COMPLETED
     FAILED = SampleStatus.FAILED
     SKIPPED = SampleStatus.SKIPPED
+    # The outcome of a failed sample whose error does not stop the metric.
+    DOWN = ValueError("down")
 
     @staticmethod
     def _run(monkeypatch, outcomes, **options):
@@ -2717,6 +2689,14 @@ class TestContinueOnSampleError:
     @staticmethod
     def _messages(caplog):
         return [record.getMessage() for record in caplog.records]
+
+    @classmethod
+    def _stops(cls, caplog):
+        return [
+            message
+            for message in cls._messages(caplog)
+            if message.startswith("Stopping ")
+        ]
 
     def test_a_failed_sample_leaves_the_others_scored(self, monkeypatch, caplog):
         caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
@@ -2797,81 +2777,109 @@ class TestContinueOnSampleError:
             *[self.SKIPPED] * 16,
         ]
         assert result.samples[3].error_category == category
-        assert result.status is EvaluationStatus.FAILED
+        # The 3 samples scored before the stop give the score.
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 0.5
+        assert result.aggregate.coverage == 3 / 20
         assert (
             f"Stopping SequenceMetric: {category} would fail every later sample"
             in self._messages(caplog)
         )
 
-    def test_failures_in_a_row_stop_the_metric(self, monkeypatch, caplog):
-        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
-        outcomes = [0.5] * 2 + [ValueError("down")] * 3 + [0.5] * 15
-
-        result, scored = self._run(
-            monkeypatch, outcomes, min_coverage=0.1, max_consecutive_failures=3
-        )
-
-        assert scored == 5
-        assert [sample.status for sample in result.samples] == [
-            *[self.COMPLETED] * 2,
-            *[self.FAILED] * 3,
-            *[self.SKIPPED] * 15,
-        ]
-        # The coverage alone gives the status: 2 of 20 samples reach 0.1.
-        assert result.status is EvaluationStatus.COMPLETED
-        assert result.score == 0.5
-        assert "Stopping SequenceMetric: 3 samples failed in a row" in (
-            self._messages(caplog)
-        )
-
-    def test_a_completed_sample_resets_the_failures_in_a_row(self, monkeypatch):
-        down = ValueError("down")
-        outcomes = [down, down, 0.5, down, down] + [0.5] * 15
-
-        result, scored = self._run(
-            monkeypatch, outcomes, min_coverage=0.5, max_consecutive_failures=3
-        )
-
-        assert scored == 20
-        assert result.status is EvaluationStatus.COMPLETED
-        assert result.aggregate.failed_count == 4
-
-    def test_the_scoring_stops_once_min_coverage_is_out_of_reach(
-        self, monkeypatch, caplog
-    ):
-        # 0.9 of 10 samples allows one failure, so the second one stops it.
-        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
-        outcomes = [0.5] * 10
-        outcomes[2] = ValueError("first")
-        outcomes[5] = ValueError("second")
+    def test_a_stop_before_any_completed_sample_fails_the_metric(self, monkeypatch):
+        outcomes = [_client_error("AccessDeniedException")] + [0.5] * 9
 
         result, scored = self._run(monkeypatch, outcomes)
 
-        assert scored == 6
+        assert scored == 1
         assert [sample.status for sample in result.samples] == [
-            *[self.COMPLETED] * 2,
             self.FAILED,
-            *[self.COMPLETED] * 2,
-            self.FAILED,
-            *[self.SKIPPED] * 4,
+            *[self.SKIPPED] * 9,
         ]
         assert result.status is EvaluationStatus.FAILED
         assert result.score is None
-        assert (
-            "Stopping SequenceMetric: 2 of 10 samples failed, so coverage can no "
-            "longer reach 0.9" in self._messages(caplog)
+
+    @pytest.mark.parametrize(
+        ("outcomes", "coverage"),
+        [
+            pytest.param(
+                [0.2, DOWN, DOWN, 0.5, DOWN, DOWN, DOWN, 0.8, DOWN, DOWN],
+                0.3,
+                id="most-samples-fail",
+            ),
+            pytest.param(
+                [0.2, 0.8] + [DOWN] * 15 + [0.2, 0.5, 0.8],
+                0.25,
+                id="fifteen-fail-in-a-row",
+            ),
+        ],
+    )
+    def test_no_share_or_run_of_failed_samples_stops_the_metric(
+        self, monkeypatch, caplog, outcomes, coverage
+    ):
+        # Every sample is scored, and the completed ones give the score.
+        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
+
+        result, scored = self._run(monkeypatch, outcomes)
+
+        assert scored == len(outcomes)
+        assert self.SKIPPED not in [sample.status for sample in result.samples]
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == pytest.approx(0.5)
+        assert result.aggregate.coverage == coverage
+        assert self._stops(caplog) == []
+
+    def test_a_metric_whose_samples_all_fail_has_no_score(self, monkeypatch, caplog):
+        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
+        outcomes = [self.DOWN] * 12
+
+        result, scored = self._run(monkeypatch, outcomes)
+
+        assert scored == 12
+        assert [sample.status for sample in result.samples] == [self.FAILED] * 12
+        assert result.status is EvaluationStatus.FAILED
+        assert result.score is None
+        assert self._stops(caplog) == []
+
+    def test_throttled_samples_on_several_workers_do_not_stop_the_metric(
+        self, monkeypatch, caplog
+    ):
+        # A burst of throttled samples, as when Bedrock throttles every worker
+        # at once, leaves the later samples to be scored.
+        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
+        _register(monkeypatch, ProbeMetric)
+
+        def score(sample):
+            if sample.ordinal < 12:
+                raise _client_error("ThrottlingException")
+            return 1.0
+
+        client_factory, client = _probe_client(score)
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts([f"value-{index}" for index in range(20)]),
+            [],
+            configuration=EvaluationConfiguration(max_attempts=1),
+            client_factory=client_factory,
         )
+
+        assert client.score.call_count == 20
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 1.0
+        assert result.aggregate.failed_count == 12
+        assert self._stops(caplog) == []
 
     def test_stop_mode_fails_the_metric_at_its_first_failed_sample(self, monkeypatch):
         outcomes = [0.5] * 3 + [ValueError("bad")] + [0.5] * 16
 
-        result, scored = self._run(
-            monkeypatch, outcomes, on_sample_error="stop", min_coverage=0.5
-        )
+        result, scored = self._run(monkeypatch, outcomes, on_sample_error="stop")
 
         assert scored == 4
         assert result.status is EvaluationStatus.FAILED
-        assert result.aggregate.spec.min_coverage == 1.0
+        assert result.score is None
+        assert result.aggregate.succeeded_count == 3
+        assert [sample.score for sample in result.samples[:3]] == [0.5] * 3
 
     def test_a_failed_sample_does_not_stop_the_other_workers(self, monkeypatch):
         _register(monkeypatch, ProbeMetric)
@@ -2924,145 +2932,6 @@ class TestContinueOnSampleError:
             self.FAILED,
             self.COMPLETED,
             *[self.SKIPPED] * 4,
-        ]
-
-    @staticmethod
-    def _stops(caplog):
-        return [
-            record.getMessage()
-            for record in caplog.records
-            if record.getMessage().startswith("Stopping ")
-        ]
-
-    @pytest.mark.parametrize(
-        ("metric_class", "failures", "options", "stop"),
-        [
-            pytest.param(
-                ProbeMetric,
-                {2: "throttled", 5: "throttled"},
-                {},
-                "2 of 10 samples failed, so coverage can no longer reach 0.9; "
-                "Bedrock throttled every failed sample, so run again with "
-                "max_workers (--max-workers) below 4",
-                id="coverage",
-            ),
-            pytest.param(
-                ProbeMetric,
-                {ordinal: "throttled" for ordinal in range(10)},
-                {"max_consecutive_failures": 3, "min_coverage": 0.1},
-                "3 samples failed in a row; Bedrock throttled every failed "
-                "sample, so run again with max_workers (--max-workers) below 4",
-                id="in-a-row",
-            ),
-            pytest.param(
-                ProbeMetric,
-                {2: "throttled", 5: "invalid"},
-                {},
-                "2 of 10 samples failed, so coverage can no longer reach 0.9; "
-                "Bedrock throttled 1 of the 2 failed samples, so run again with "
-                "max_workers (--max-workers) below 4",
-                id="some-throttled",
-            ),
-            pytest.param(
-                ProbeMetric,
-                {2: "throttled", 5: "throttled"},
-                {"max_workers": 2},
-                "2 of 10 samples failed, so coverage can no longer reach 0.9; "
-                "Bedrock throttled every failed sample, so run again with "
-                "max_workers (--max-workers) below 2",
-                id="two-workers",
-            ),
-            pytest.param(
-                ProbeMetric,
-                {2: "throttled", 5: "throttled"},
-                {"max_workers": 1},
-                "2 of 10 samples failed, so coverage can no longer reach 0.9",
-                id="one-worker",
-            ),
-            pytest.param(
-                UnflaggedProbeMetric,
-                {2: "throttled", 5: "throttled"},
-                {},
-                "2 of 10 samples failed, so coverage can no longer reach 0.9",
-                id="not-thread-safe",
-            ),
-            pytest.param(
-                ProbeMetric,
-                {2: "invalid", 5: "invalid"},
-                {},
-                "2 of 10 samples failed, so coverage can no longer reach 0.9",
-                id="not-throttled",
-            ),
-        ],
-    )
-    def test_a_stop_after_throttled_samples_advises_fewer_workers(
-        self, monkeypatch, caplog, metric_class, failures, options, stop
-    ):
-        # Fewer workers send fewer requests a minute, so the advice needs a
-        # throttled sample and more than one worker.
-        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
-        name = _register(monkeypatch, metric_class)
-        errors = {
-            "throttled": lambda: _client_error("ThrottlingException"),
-            "invalid": lambda: ValueError("the judge reply quotes the record"),
-        }
-
-        def score(sample):
-            failure = failures.get(sample.ordinal)
-            if failure is not None:
-                raise errors[failure]()
-            return 1.0
-
-        client_factory, _ = _probe_client(score)
-
-        MetricRegistry.compute_metric(
-            name,
-            _texts([f"value-{index}" for index in range(10)]),
-            [],
-            configuration=EvaluationConfiguration(max_attempts=1, **options),
-            client_factory=client_factory,
-        )
-
-        assert self._stops(caplog) == [f"Stopping {name}: {stop}"]
-
-    def test_an_error_that_every_later_sample_would_hit_gets_no_advice(
-        self, monkeypatch, caplog
-    ):
-        # Sample 5 is denied only once the engine has recorded the throttled
-        # sample 2; fewer workers would not avoid the denial.
-        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
-        _register(monkeypatch, ProbeMetric)
-        recorded = threading.Event()
-        failed = evaluation._SampleFailures.failed
-
-        def recording(self, sample, error):
-            failed(self, sample, error)
-            recorded.set()
-
-        monkeypatch.setattr(evaluation._SampleFailures, "failed", recording)
-
-        def score(sample):
-            if sample.ordinal == 2:
-                raise _client_error("ThrottlingException")
-            if sample.ordinal == 5:
-                assert recorded.wait(timeout=10)
-                raise _client_error("AccessDeniedException")
-            return 1.0
-
-        client_factory, _ = _probe_client(score)
-
-        result = MetricRegistry.compute_metric(
-            "ProbeMetric",
-            _texts([f"value-{index}" for index in range(10)]),
-            [],
-            configuration=EvaluationConfiguration(max_attempts=1),
-            client_factory=client_factory,
-        )
-
-        assert result.samples[2].error_category == "bedrock:ThrottlingException"
-        assert self._stops(caplog) == [
-            "Stopping ProbeMetric: bedrock:AccessDeniedException would fail "
-            "every later sample"
         ]
 
 

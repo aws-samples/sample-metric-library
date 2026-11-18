@@ -43,9 +43,10 @@ class SampleStatus(str, Enum):
 class EvaluationStatus(str, Enum):
     """Status for one metric's detailed evaluation.
 
-    An aggregate is COMPLETED when the share of its samples that completed is
-    at least ``min_coverage`` of its spec, and its score comes from those
-    samples only; otherwise it is FAILED and has no score.
+    An aggregate is COMPLETED when at least one of its samples completed, and
+    its score comes from the completed samples only. It is FAILED, without a
+    score, when no sample completed, or when a failed sample fails it, as with
+    the engine's ``on_sample_error="stop"``.
     """
 
     COMPLETED = "completed"
@@ -174,24 +175,16 @@ class SampleResult:
 
 @dataclass(frozen=True)
 class AggregationSpec:
-    """Closed configuration for the supported numeric aggregators.
-
-    ``min_coverage`` is the lowest share of completed samples of a COMPLETED
-    aggregate; the default, 1.0, needs every sample.
-    """
+    """Closed configuration for the supported numeric aggregators."""
 
     method: AggregationMethod = "numeric_mean"
     weights: tuple[float, ...] | None = None
     quantile: float | None = None
     thresholds: tuple[float, ...] | None = None
-    min_coverage: float = 1.0
 
     def __post_init__(self) -> None:
         if self.method not in _METHODS:
             raise ValueError(f"unknown aggregation method: {self.method!r}")
-        object.__setattr__(
-            self, "min_coverage", _validate_min_coverage(self.min_coverage)
-        )
 
         normalized_weights = None
         if self.weights is not None:
@@ -325,16 +318,16 @@ class AggregationResult:
 
         if self.status is EvaluationStatus.COMPLETED:
             object.__setattr__(self, "score", _validate_score(self.score))
-            if normalized_coverage < self.spec.min_coverage:
-                raise ValueError(
-                    "completed aggregation requires coverage of at least min_coverage"
-                )
+            if self.succeeded_count == 0:
+                raise ValueError("completed aggregation requires a completed sample")
             return
 
         if self.score is not None:
             raise ValueError("failed aggregation cannot contain a score")
-        if normalized_coverage >= self.spec.min_coverage:
-            raise ValueError("failed aggregation requires coverage below min_coverage")
+        if self.succeeded_count and not self.failed_count:
+            raise ValueError(
+                "failed aggregation with completed samples requires a failed sample"
+            )
 
     def _validate_denominator(self) -> None:
         if self.method == "weighted_mean":
@@ -358,52 +351,35 @@ class AggregationResult:
             raise ValueError("denominator must equal succeeded_count")
 
 
-def numeric_mean(
-    results: Sequence[SampleResult], *, min_coverage: float = 1.0
-) -> AggregationResult:
+def numeric_mean(results: Sequence[SampleResult]) -> AggregationResult:
     """Return the ordered arithmetic mean of successful sample scores."""
-    return _aggregate_numeric(results, AggregationSpec(min_coverage=min_coverage))
+    return _aggregate_numeric(results, AggregationSpec())
 
 
 def weighted_mean(
     results: Sequence[SampleResult],
     weights: Sequence[float],
-    *,
-    min_coverage: float = 1.0,
 ) -> AggregationResult:
     """Return an ordinal-aligned positive-weight mean."""
     return _aggregate_numeric(
         results,
-        AggregationSpec(
-            method="weighted_mean", weights=tuple(weights), min_coverage=min_coverage
-        ),
+        AggregationSpec(method="weighted_mean", weights=tuple(weights)),
     )
 
 
-def median(
-    results: Sequence[SampleResult], *, min_coverage: float = 1.0
-) -> AggregationResult:
+def median(results: Sequence[SampleResult]) -> AggregationResult:
     """Return the median of successful sample scores."""
-    return _aggregate_numeric(
-        results, AggregationSpec(method="median", min_coverage=min_coverage)
-    )
+    return _aggregate_numeric(results, AggregationSpec(method="median"))
 
 
-def quantile(
-    results: Sequence[SampleResult], q: float, *, min_coverage: float = 1.0
-) -> AggregationResult:
+def quantile(results: Sequence[SampleResult], q: float) -> AggregationResult:
     """Return an inclusive type-7 linear quantile of successful scores."""
-    return _aggregate_numeric(
-        results,
-        AggregationSpec(method="quantile", quantile=q, min_coverage=min_coverage),
-    )
+    return _aggregate_numeric(results, AggregationSpec(method="quantile", quantile=q))
 
 
 def prf(
     results: Sequence[SampleResult],
     thresholds: Sequence[float] | None = None,
-    *,
-    min_coverage: float = 1.0,
 ) -> AggregationResult:
     """Return the class means of precision, recall and F1 from the match records.
 
@@ -412,24 +388,39 @@ def prf(
     """
     if thresholds is not None:
         thresholds = tuple(thresholds)
-    return _aggregate_prf(
-        results,
-        AggregationSpec(method="prf", thresholds=thresholds, min_coverage=min_coverage),
-    )
+    return _aggregate_prf(results, AggregationSpec(method="prf", thresholds=thresholds))
 
 
 def aggregate(
     results: Sequence[SampleResult],
     spec: AggregationSpec,
+    *,
+    fail_fast: bool = False,
 ) -> AggregationResult:
+    """Aggregate the completed samples of ``results`` with ``spec``.
+
+    The aggregate is FAILED, without a score, when no sample completed, and
+    with ``fail_fast`` also when a sample failed: the engine passes it for
+    ``on_sample_error="stop"``, where the first failed sample fails its metric.
+    """
     if spec.method == "prf":
-        return _aggregate_prf(results, spec)
-    return _aggregate_numeric(results, spec)
+        return _aggregate_prf(results, spec, fail_fast)
+    return _aggregate_numeric(results, spec, fail_fast)
+
+
+def _status(
+    succeeded_count: int, failed_count: int, fail_fast: bool
+) -> EvaluationStatus:
+    """COMPLETED with a completed sample, unless ``fail_fast`` and one failed."""
+    if succeeded_count == 0 or (fail_fast and failed_count):
+        return EvaluationStatus.FAILED
+    return EvaluationStatus.COMPLETED
 
 
 def _aggregate_numeric(
     results: Sequence[SampleResult],
     spec: AggregationSpec,
+    fail_fast: bool = False,
 ) -> AggregationResult:
     samples = tuple(results)
     if not samples:
@@ -446,11 +437,7 @@ def _aggregate_numeric(
     succeeded_count = len(completed)
     coverage = succeeded_count / total_count
 
-    status = (
-        EvaluationStatus.COMPLETED
-        if coverage >= spec.min_coverage
-        else EvaluationStatus.FAILED
-    )
+    status = _status(succeeded_count, failed_count, fail_fast)
     candidate_score, denominator = _reduce_successful(completed, spec)
     score = candidate_score if status is EvaluationStatus.COMPLETED else None
 
@@ -508,6 +495,7 @@ def _reduce_successful(
 def _aggregate_prf(
     results: Sequence[SampleResult],
     spec: AggregationSpec,
+    fail_fast: bool = False,
 ) -> AggregationResult:
     samples = tuple(results)
     if not samples:
@@ -524,11 +512,7 @@ def _aggregate_prf(
     succeeded_count = len(completed)
     coverage = succeeded_count / total_count
 
-    status = (
-        EvaluationStatus.COMPLETED
-        if coverage >= spec.min_coverage
-        else EvaluationStatus.FAILED
-    )
+    status = _status(succeeded_count, failed_count, fail_fast)
     values = (
         _prf_values(completed, spec) if status is EvaluationStatus.COMPLETED else None
     )
@@ -663,16 +647,6 @@ def _validate_weight(weight: object) -> float:
         raise ValueError("weights must be finite")
     if normalized <= 0.0:
         raise ValueError("weights must be strictly positive")
-    return normalized
-
-
-def _validate_min_coverage(value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, Real):
-        raise TypeError("min_coverage must be a real number")
-    normalized = float(value)
-    # The comparison is False for NaN, so it rejects NaN too.
-    if not 0.0 < normalized <= 1.0:
-        raise ValueError("min_coverage must be greater than 0.0 and at most 1.0")
     return normalized
 
 

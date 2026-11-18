@@ -40,16 +40,13 @@ from metric_library.core.aggregation import (
 from metric_library.core.bedrock_client import BedrockClient
 from metric_library.core.data_handler import DataHandler
 from metric_library.core.evaluation import (
-    DEFAULT_MAX_CONSECUTIVE_FAILURES,
     DEFAULT_MAX_WORKERS,
-    DEFAULT_MIN_COVERAGE,
     MAX_WORKERS_LIMIT,
     THROTTLED_CATEGORY,
     EvaluationConfiguration,
     MetricEvaluationResult,
     _safe_error,
     _scoring_workers,
-    _throttling_advice,
 )
 from metric_library.core.llm_metric import LLMBatchMetric, LLMMetric
 from metric_library.core.matching import LabelSet, ListItems, WholeValue
@@ -310,8 +307,9 @@ def _envelope_value(
     A completed result maps to its aggregate ``values`` object when the
     aggregator provides one (the ``prf`` aggregator), else to its finite
     float score. A failed result is a MetricError that names its first failed
-    sample by the record identifier at its ordinal; with ``continue``, the
-    coverage, the failure counts and the ``advice``, if any, come first.
+    sample by the record identifier at its ordinal. With ``continue``, a
+    metric fails only when no sample completed, which comes first, with the
+    failure counts and the ``advice``, if any.
     """
     if isinstance(result, MetricError):
         return result
@@ -322,14 +320,10 @@ def _envelope_value(
         failure = f"sample {record_ids[failed_sample.ordinal]}: {failed_sample.error}"
         if on_sample_error == "stop":
             return MetricError(failure)
-        aggregate = result.aggregate
-        summary = _failure_counts(aggregate)
+        summary = _failure_counts(result.aggregate)
         if advice is not None:
             summary = f"{summary}; {advice}"
-        return MetricError(
-            f"coverage {_coverage_text(aggregate)} is below "
-            f"{aggregate.spec.min_coverage:g}: {summary}; {failure}"
-        )
+        return MetricError(f"no sample completed: {summary}; {failure}")
     if result.aggregate.values is not None:
         return result.aggregate.values
     return result.score
@@ -348,8 +342,7 @@ def _coverage_entry(aggregate: AggregationResult) -> dict:
 def _coverage_text(aggregate: AggregationResult) -> str:
     """The coverage rounded down to 3 decimals.
 
-    Rounding down keeps a coverage below 1 from reading as 1, and one below
-    ``min_coverage`` from reading as reaching it.
+    Rounding down keeps a coverage below 1 from reading as 1.
     """
     thousandths = aggregate.succeeded_count * 1000 // aggregate.total_count
     return f"{thousandths / 1000:g}"
@@ -362,6 +355,27 @@ def _failure_counts(aggregate: AggregationResult) -> str:
     if skipped:
         text += f" and {skipped} {'was' if skipped == 1 else 'were'} skipped"
     return text
+
+
+def _throttling_advice(throttled: int, failed: int, workers: int) -> str | None:
+    """Advise fewer workers for a metric whose failed samples Bedrock throttled.
+
+    ``throttled`` of the ``failed`` samples failed with ``THROTTLED_CATEGORY``
+    while ``workers`` samples were scored at the same time. A metric scored one
+    sample at a time gets no advice, and nor does one without such a sample.
+    """
+    if throttled == 0 or workers < 2:
+        return None
+    if throttled < failed:
+        subject = f"{throttled} of the {failed} failed samples"
+    elif failed == 1:
+        subject = "the failed sample"
+    else:
+        subject = "every failed sample"
+    return (
+        f"Bedrock throttled {subject}, so run again with max_workers "
+        f"(--max-workers) below {workers}"
+    )
 
 
 def _metric_throttling_advice(
@@ -858,21 +872,11 @@ def main():
         default="continue",
         help=(
             "What a sample that still fails after its retries does. continue: "
-            "the other samples are scored, and a metric whose completed samples "
-            "reach --min-coverage gets the score of those samples; the metric "
-            "stops early on an error that every later sample would hit too, "
-            f"such as expired credentials, or after "
-            f"{DEFAULT_MAX_CONSECUTIVE_FAILURES} failed samples in a row. stop: "
-            "the first failed sample fails its metric. Omitted: continue."
-        ),
-    )
-    parser.add_argument(
-        "--min-coverage",
-        type=float,
-        help=(
-            "With --on-sample-error continue, the share of the samples of each "
-            "metric that must complete for the metric to get a score, greater "
-            f"than 0 and at most 1. Omitted: {DEFAULT_MIN_COVERAGE}."
+            "the other samples are scored, and the metric gets the score of its "
+            "completed samples, or fails when none completed; it stops early "
+            "only on an error that every later sample would hit too, such as "
+            "expired credentials. stop: the first failed sample fails its "
+            "metric. Omitted: continue."
         ),
     )
     args = parser.parse_args()
@@ -1017,11 +1021,6 @@ def main():
         ):
             if value is not None and "list" not in matchers:
                 raise ValueError(f"{option} requires --matcher list")
-        if args.min_coverage is not None and args.on_sample_error == "stop":
-            raise ValueError("--min-coverage requires --on-sample-error continue")
-        min_coverage = (
-            DEFAULT_MIN_COVERAGE if args.min_coverage is None else args.min_coverage
-        )
         thresholds = None
         if args.thresholds is not None:
             thresholds = _thresholds(args.thresholds)
@@ -1049,7 +1048,6 @@ def main():
                 matcher=matcher_objects[matcher],
                 max_workers=args.max_workers,
                 on_sample_error=args.on_sample_error,
-                min_coverage=min_coverage,
             )
         meta["metrics"] = {
             name: _metric_meta(name, method, matcher, args, thresholds)

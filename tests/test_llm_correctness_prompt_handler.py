@@ -756,8 +756,9 @@ class TestOtherMetricsShareTheComposition:
             client_factory=factory,
         )
 
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        # The completed sample gives the score; the failed one keeps its error.
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 0.2
         assert _statuses(result) == (SampleStatus.COMPLETED, SampleStatus.FAILED)
         assert result.samples[0].score == 0.2
         assert "LLM judge score must be between 0.0 and 1.0" in result.samples[1].error

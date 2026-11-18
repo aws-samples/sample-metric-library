@@ -159,14 +159,6 @@
     ]
   },
   "excluded": {
-    "ItemSemanticMatch/edge": {
-      "error": "Cannot generate an embedding for empty text",
-      "failed_ordinal": 2
-    },
-    "ItemSemanticMatch/text": {
-      "error": "Cannot generate an embedding for empty text",
-      "failed_ordinal": 4
-    },
     "MeanAbsoluteError/edge": {
       "error": "MeanAbsoluteError does not accept text data (prediction 0); supported: audio, image, video",
       "failed_ordinal": null
@@ -207,10 +199,6 @@
       "error": "MeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
       "failed_ordinal": null
     },
-    "NumericExactMatch/edge": {
-      "error": "Cannot convert    to numeric value",
-      "failed_ordinal": 2
-    },
     "NumericExactMatch/label_sets": {
       "error": "Cannot convert ['a' 'b'] to numeric value",
       "failed_ordinal": 0
@@ -219,14 +207,6 @@
       "error": "Cannot convert [1 2] to numeric value",
       "failed_ordinal": 0
     },
-    "NumericExactMatch/text": {
-      "error": "Cannot convert cat to numeric value",
-      "failed_ordinal": 0
-    },
-    "NumericFuzzyMatch/edge": {
-      "error": "Cannot convert    to numeric value",
-      "failed_ordinal": 2
-    },
     "NumericFuzzyMatch/label_sets": {
       "error": "Cannot convert ['a' 'b'] to numeric value",
       "failed_ordinal": 0
@@ -234,18 +214,6 @@
     "NumericFuzzyMatch/numeric_lists": {
       "error": "Cannot convert [1 2] to numeric value",
       "failed_ordinal": 0
-    },
-    "NumericFuzzyMatch/text": {
-      "error": "Cannot convert cat to numeric value",
-      "failed_ordinal": 0
-    },
-    "RawSemanticMatch/edge": {
-      "error": "Cannot generate an embedding for empty text",
-      "failed_ordinal": 2
-    },
-    "RawSemanticMatch/text": {
-      "error": "Cannot generate an embedding for empty text",
-      "failed_ordinal": 4
     },
     "RootMeanSquaredError/edge": {
       "error": "RootMeanSquaredError does not accept text data (prediction 0); supported: audio, image, video",
@@ -1411,6 +1379,46 @@
         }
       ]
     },
+    "ItemSemanticMatch/edge": {
+      "aggregate": {
+        "coverage": 0.6666666666666666,
+        "denominator": 2,
+        "failed_count": 1,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 2,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": "Cannot generate an embedding for empty text",
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": null,
+          "status": "failed"
+        }
+      ]
+    },
     "ItemSemanticMatch/label_sets": {
       "aggregate": {
         "coverage": 1.0,
@@ -1567,6 +1575,86 @@
           "ordinal": 4,
           "sample_id": "4",
           "score": 0.02819764655448881,
+          "status": "completed"
+        }
+      ]
+    },
+    "ItemSemanticMatch/text": {
+      "aggregate": {
+        "coverage": 0.875,
+        "denominator": 7,
+        "failed_count": 1,
+        "method": "numeric_mean",
+        "score": 0.8272109201899241,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 7,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.4840004559902135,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.5716963609066221,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": "Cannot generate an embedding for empty text",
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.7347796244326336,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 1.0,
           "status": "completed"
         }
       ]
@@ -2411,6 +2499,46 @@
         }
       ]
     },
+    "NumericExactMatch/edge": {
+      "aggregate": {
+        "coverage": 0.6666666666666666,
+        "denominator": 2,
+        "failed_count": 1,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 2,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert    to numeric value",
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": null,
+          "status": "failed"
+        }
+      ]
+    },
     "NumericExactMatch/numeric_scalar": {
       "aggregate": {
         "coverage": 1.0,
@@ -2467,6 +2595,126 @@
         }
       ]
     },
+    "NumericExactMatch/text": {
+      "aggregate": {
+        "coverage": 0.25,
+        "denominator": 2,
+        "failed_count": 6,
+        "method": "numeric_mean",
+        "score": 1.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 2,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": "Cannot convert cat to numeric value",
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert Dog  to numeric value",
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert bird to numeric value",
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert  to numeric value",
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert a b c to numeric value",
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert hello world to numeric value",
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": null,
+          "status": "failed"
+        }
+      ]
+    },
+    "NumericFuzzyMatch/edge": {
+      "aggregate": {
+        "coverage": 0.6666666666666666,
+        "denominator": 2,
+        "failed_count": 1,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 2,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert    to numeric value",
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": null,
+          "status": "failed"
+        }
+      ]
+    },
     "NumericFuzzyMatch/numeric_scalar": {
       "aggregate": {
         "coverage": 1.0,
@@ -2520,6 +2768,86 @@
           "sample_id": "4",
           "score": 1.0,
           "status": "completed"
+        }
+      ]
+    },
+    "NumericFuzzyMatch/text": {
+      "aggregate": {
+        "coverage": 0.25,
+        "denominator": 2,
+        "failed_count": 6,
+        "method": "numeric_mean",
+        "score": 1.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 2,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": "Cannot convert cat to numeric value",
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert Dog  to numeric value",
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert bird to numeric value",
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert  to numeric value",
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert a b c to numeric value",
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": "Cannot convert hello world to numeric value",
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": null,
+          "status": "failed"
         }
       ]
     },
@@ -3363,6 +3691,46 @@
         }
       ]
     },
+    "RawSemanticMatch/edge": {
+      "aggregate": {
+        "coverage": 0.6666666666666666,
+        "denominator": 2,
+        "failed_count": 1,
+        "method": "numeric_mean",
+        "score": 0.0,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 2,
+        "total_count": 3,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": "Cannot generate an embedding for empty text",
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": null,
+          "status": "failed"
+        }
+      ]
+    },
     "RawSemanticMatch/label_sets": {
       "aggregate": {
         "coverage": 1.0,
@@ -3519,6 +3887,86 @@
           "ordinal": 4,
           "sample_id": "4",
           "score": 0.02819764655448881,
+          "status": "completed"
+        }
+      ]
+    },
+    "RawSemanticMatch/text": {
+      "aggregate": {
+        "coverage": 0.875,
+        "denominator": 7,
+        "failed_count": 1,
+        "method": "numeric_mean",
+        "score": 0.8272109201899241,
+        "skipped_count": 0,
+        "status": "completed",
+        "succeeded_count": 7,
+        "total_count": 8,
+        "values": null
+      },
+      "samples": [
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 0,
+          "sample_id": "0",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 1,
+          "sample_id": "1",
+          "score": 0.4840004559902135,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 2,
+          "sample_id": "2",
+          "score": 0.5716963609066221,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 3,
+          "sample_id": "3",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": "Cannot generate an embedding for empty text",
+          "ordinal": 4,
+          "sample_id": "4",
+          "score": null,
+          "status": "failed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 5,
+          "sample_id": "5",
+          "score": 1.0,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 6,
+          "sample_id": "6",
+          "score": 0.7347796244326336,
+          "status": "completed"
+        },
+        {
+          "details": null,
+          "error": null,
+          "ordinal": 7,
+          "sample_id": "7",
+          "score": 1.0,
           "status": "completed"
         }
       ]

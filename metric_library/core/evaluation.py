@@ -67,11 +67,6 @@ MULTIPLIER_LIMIT = 5.0
 DEFAULT_MAX_WORKERS = 4
 MAX_WORKERS_LIMIT = MAX_POOL_CONNECTIONS
 
-# With on_sample_error="continue", the share of samples that must complete for
-# a metric to have a score, and how many failed samples in a row stop it.
-DEFAULT_MIN_COVERAGE = 0.9
-DEFAULT_MAX_CONSECUTIVE_FAILURES = 10
-
 # The error category of a sample that Bedrock still throttled after its
 # retries. Fewer workers send fewer requests a minute, so the advice for a
 # metric that several workers scored is to lower max_workers.
@@ -182,15 +177,13 @@ class EvaluationConfiguration:
 
     ``on_sample_error`` sets what a failed sample does. With ``"continue"``,
     the default, the other samples are still scored, and the aggregate is
-    COMPLETED when at least ``min_coverage`` of the samples completed, with
-    the score of those samples only; else it is FAILED. The scoring stops
-    early, and the samples it has not scored are SKIPPED, when a sample fails
-    with an error that every later sample would hit too, such as expired
-    credentials or a model without access; when ``max_consecutive_failures``
-    samples fail in a row; or when ``min_coverage`` can no longer be reached.
-    With ``"stop"``, a sample that fails stops the evaluation: earlier
-    successes are kept, later samples are skipped, and the aggregate status is
-    failed, whatever ``min_coverage`` says.
+    COMPLETED with the score of the completed samples, whatever their share;
+    it is FAILED only when no sample completed. The scoring stops early, and
+    the samples it has not scored are SKIPPED, only when a sample fails with
+    an error that every later sample would hit too, such as expired
+    credentials or a model without access. With ``"stop"``, a sample that
+    fails stops the evaluation: earlier successes are kept, later samples are
+    skipped, and the aggregate status is failed.
 
     Retries wait ``min(max_delay, initial_delay * multiplier ** (n - 1))``
     seconds after the ``n``-th failed attempt.
@@ -230,8 +223,6 @@ class EvaluationConfiguration:
     # Last, so that a configuration built positionally keeps its meaning.
     max_workers: int = DEFAULT_MAX_WORKERS
     on_sample_error: Literal["continue", "stop"] = "continue"
-    min_coverage: float = DEFAULT_MIN_COVERAGE
-    max_consecutive_failures: int = DEFAULT_MAX_CONSECUTIVE_FAILURES
 
     def __post_init__(self) -> None:
         if isinstance(self.max_attempts, bool) or not isinstance(
@@ -252,15 +243,6 @@ class EvaluationConfiguration:
 
         if self.on_sample_error not in ("continue", "stop"):
             raise ValueError("on_sample_error must be 'continue' or 'stop'")
-        # AggregationSpec checks min_coverage and returns it as a float.
-        min_coverage = AggregationSpec(min_coverage=self.min_coverage).min_coverage
-        object.__setattr__(self, "min_coverage", min_coverage)
-        if isinstance(self.max_consecutive_failures, bool) or not isinstance(
-            self.max_consecutive_failures, int
-        ):
-            raise TypeError("max_consecutive_failures must be an integer")
-        if self.max_consecutive_failures < 1:
-            raise ValueError("max_consecutive_failures must be at least 1")
 
         initial_delay = _normalize_timing_value("initial_delay", self.initial_delay)
         multiplier = _normalize_timing_value("multiplier", self.multiplier)
@@ -305,10 +287,6 @@ class EvaluationConfiguration:
             weights=self.weights,
             quantile=self.quantile,
             thresholds=self.thresholds,
-            # In stop mode, a failed sample fails the aggregate.
-            min_coverage=(
-                self.min_coverage if self.on_sample_error == "continue" else 1.0
-            ),
         )
         aggregation.validate_for(total_count)
         return aggregation
@@ -426,62 +404,27 @@ class _Cutoff:
             raise _SampleSkipped
 
 
-def _throttling_advice(throttled: int, failed: int, workers: int) -> str | None:
-    """Advise fewer workers for a metric whose failed samples Bedrock throttled.
-
-    ``throttled`` of the ``failed`` samples failed with ``THROTTLED_CATEGORY``
-    while ``workers`` samples were scored at the same time. A metric scored one
-    sample at a time gets no advice, and nor does one without such a sample.
-    """
-    if throttled == 0 or workers < 2:
-        return None
-    if throttled < failed:
-        subject = f"{throttled} of the {failed} failed samples"
-    elif failed == 1:
-        subject = "the failed sample"
-    else:
-        subject = "every failed sample"
-    return (
-        f"Bedrock throttled {subject}, so run again with max_workers "
-        f"(--max-workers) below {workers}"
-    )
-
-
 class _SampleFailures:
-    """Apply ``on_sample_error`` to the samples of one metric as they end.
+    """Apply ``on_sample_error`` to the samples of one metric as they fail.
 
     Only the thread that runs the scoring calls it. In stop mode, a failure
-    records its sample in ``cutoff``. In continue mode, a failure stops every
-    sample when its error would fail every later sample too, when it is the
-    ``max_consecutive_failures``-th failure in a row, or when so many samples
-    have failed that ``min_coverage`` can no longer be reached. When one of
-    the last two rules stops it, the log line adds ``_throttling_advice`` for
-    ``workers``.
+    records its sample in ``cutoff``. In continue mode, only a failure whose
+    error every later sample would hit too stops every sample.
     """
 
     def __init__(
         self,
         metric_name: str,
-        total: int,
         configuration: EvaluationConfiguration,
         cutoff: _Cutoff,
-        workers: int,
     ) -> None:
         self._metric_name = metric_name
-        self._total = total
         self._configuration = configuration
         self._cutoff = cutoff
-        self._workers = workers
-        self._failed = 0
-        self._throttled = 0
-        self._in_a_row = 0
 
     @property
     def stopped(self) -> bool:
         return self._cutoff.ordinal is not None
-
-    def completed(self) -> None:
-        self._in_a_row = 0
 
     def failed(self, sample: EvaluationSample, error: Exception) -> None:
         category = _classify_failure(error)[1]
@@ -495,34 +438,14 @@ class _SampleFailures:
         if self._configuration.on_sample_error == "stop":
             self._cutoff.record(sample.ordinal)
             return
-        if self.stopped:
-            return  # it was running when the scoring stopped
-        self._failed += 1
-        self._in_a_row += 1
-        if category == THROTTLED_CATEGORY:
-            self._throttled += 1
-        min_coverage = self._configuration.min_coverage
-        fatal = _is_fatal(error)
-        if fatal:
-            reason = f"{category} would fail every later sample"
-        elif self._in_a_row >= self._configuration.max_consecutive_failures:
-            reason = f"{self._in_a_row} samples failed in a row"
-        elif (self._total - self._failed) / self._total < min_coverage:
-            reason = (
-                f"{self._failed} of {self._total} samples failed, so coverage "
-                f"can no longer reach {min_coverage:g}"
-            )
-        else:
+        # A sample that was running when the scoring stopped changes nothing.
+        if self.stopped or not _is_fatal(error):
             return
-        # Fewer workers would not avoid an error that every later sample hits.
-        advice = (
-            None
-            if fatal
-            else _throttling_advice(self._throttled, self._failed, self._workers)
+        logger.warning(
+            "Stopping %s: %s would fail every later sample",
+            self._metric_name,
+            category,
         )
-        if advice is not None:
-            reason = f"{reason}; {advice}"
-        logger.warning("Stopping %s: %s", self._metric_name, reason)
         self._cutoff.stop_all()
 
 
@@ -621,20 +544,21 @@ def evaluate_metric(
         )
 
     workers = _scoring_workers(metric, configuration.max_workers, len(samples))
-    failures = _SampleFailures(
-        metric_name, len(samples), configuration, cutoff, workers
-    )
+    failures = _SampleFailures(metric_name, configuration, cutoff)
     if workers > 1:
         outcomes = _score_concurrently(samples, score, workers, cutoff, failures)
     else:
         outcomes = _score_sequentially(samples, score, failures)
 
-    if configuration.on_sample_error == "stop":
+    stop = configuration.on_sample_error == "stop"
+    if stop:
         sample_results = _fail_fast_results(samples, outcomes)
     else:
         sample_results = _continued_results(samples, outcomes)
     _log_failures(metric_name, sample_results)
-    aggregate = aggregate_samples(sample_results, aggregation)
+    # In stop mode, the failed sample fails the metric; in continue mode, the
+    # score comes from the completed samples, however few.
+    aggregate = aggregate_samples(sample_results, aggregation, fail_fast=stop)
     return MetricEvaluationResult(
         metric_name=metric_name,
         samples=sample_results,
@@ -661,8 +585,6 @@ def _score_sequentially(
         except Exception as error:
             outcomes[sample.ordinal] = error
             failures.failed(sample, error)
-        else:
-            failures.completed()
     return outcomes
 
 
@@ -712,8 +634,6 @@ def _score_concurrently(
                     # such as KeyboardInterrupt, propagates, as with one worker.
                     outcomes[sample.ordinal] = error
                     failures.failed(sample, error)
-                else:
-                    failures.completed()
     except BaseException:
         # Return at once: start nothing more, stop every running sample before
         # its next attempt, and let the calls in flight end on their own.
