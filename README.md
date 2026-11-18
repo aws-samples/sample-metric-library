@@ -962,6 +962,19 @@ Rules for authors:
   `True`, except one that defines `compute` or `compute_matrix` without
   setting `thread_safe` in the same class: it gets `False`, and its class
   definition emits a `UserWarning`.
+- `thread_safe = True` lets the engine score up to `max_workers` samples at
+  the same time (4 by default; `--max-workers` on the runner), calling
+  `compute` of one instance from several threads. Set it only when `compute`
+  keeps per-sample values in local variables, guards any change to shared
+  state, such as a counter or a cache, with a lock, and gives each sample a
+  score that does not depend on the other samples. Without it the metric is
+  scored one sample at a time. Threads help only when `compute` waits on
+  Bedrock or on code that releases the GIL, such as image decoding; for
+  pure-Python `compute` they only add overhead. A value other than `True` or
+  `False` fails the metric before scoring. A subclass of `LLMMetric` inherits
+  `True`, except one that defines `compute` or `compute_matrix` without
+  setting `thread_safe` in the same class: it gets `False`, and its class
+  definition emits a `UserWarning`.
 - With the `labels` or `list` matcher and the `prf` aggregator, the engine
   calls `compute` once for each candidate pair of items:
   `sample.prediction` and `sample.reference` each hold one item, and the

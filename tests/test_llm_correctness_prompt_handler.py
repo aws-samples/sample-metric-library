@@ -28,6 +28,12 @@ from metric_library import (
     EvaluationStatus,
     SampleStatus,
 )
+from metric_library import (
+    EvaluationConfiguration,
+    EvaluationSample,
+    EvaluationStatus,
+    SampleStatus,
+)
 from metric_library.core.bedrock_client import BedrockClient
 from metric_library.core.data import DataType, Modality
 from metric_library.core.data.text_data import TextData

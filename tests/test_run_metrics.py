@@ -3130,6 +3130,10 @@ class TestJudgeImageFormats:
                 # are judged one at a time.
                 "--max-workers",
                 "1",
+                # The tests read the judge log in record order, so the records
+                # are judged one at a time.
+                "--max-workers",
+                "1",
             ],
             cwd=str(tmp_path),
             env={"JUDGE_LOG": str(log_path), "SAVE_LOG": str(tmp_path / "saves.log")},
