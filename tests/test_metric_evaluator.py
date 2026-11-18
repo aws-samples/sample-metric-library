@@ -2710,8 +2710,9 @@ class TestContinueOnSampleError:
         # The logs name the category, never the message.
         assert self._messages(caplog) == [
             "Sample 3 of SequenceMetric failed with exception:ValueError",
-            "SequenceMetric: 1 of 10 samples failed (exception:ValueError 1), "
-            "0 skipped",
+            "SequenceMetric: 9 of 10 samples completed, 1 failed "
+            "(exception:ValueError 1), 0 skipped; the score comes from the "
+            "completed samples",
         ]
 
     @pytest.mark.parametrize(
@@ -2776,10 +2777,11 @@ class TestContinueOnSampleError:
         assert result.status is EvaluationStatus.COMPLETED
         assert result.score == 0.5
         assert result.aggregate.coverage == 3 / 20
-        assert (
-            f"Stopping SequenceMetric: {category} would fail every later sample"
-            in self._messages(caplog)
-        )
+        assert self._messages(caplog)[-2:] == [
+            f"Stopping SequenceMetric: {category} would fail every later sample",
+            f"SequenceMetric: 3 of 20 samples completed, 1 failed ({category} 1), "
+            "16 skipped; the score comes from the completed samples",
+        ]
 
     def test_a_stop_before_any_completed_sample_fails_the_metric(self, monkeypatch):
         outcomes = [_client_error("AccessDeniedException")] + [0.5] * 9
@@ -2835,6 +2837,10 @@ class TestContinueOnSampleError:
         assert result.status is EvaluationStatus.FAILED
         assert result.score is None
         assert self._stops(caplog) == []
+        assert self._messages(caplog)[-1] == (
+            "SequenceMetric: 0 of 12 samples completed, 12 failed "
+            "(exception:ValueError 12), 0 skipped; the metric failed"
+        )
 
     def test_throttled_samples_on_several_workers_do_not_stop_the_metric(
         self, monkeypatch, caplog

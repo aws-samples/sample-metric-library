@@ -704,7 +704,12 @@ def _skipped_result(sample: EvaluationSample) -> SampleResult:
 
 
 def _log_failures(metric_name: str, results: tuple[SampleResult, ...]) -> None:
-    """Log one line with the failed samples of each error category, if any."""
+    """Log one line with the outcome of a metric that has failed samples.
+
+    The line counts the completed samples, which alone give the score, the
+    failed ones by error category and the skipped ones, and says whether the
+    metric has a score or failed because no sample completed.
+    """
     categories = Counter(
         result.error_category
         for result in results
@@ -712,16 +717,21 @@ def _log_failures(metric_name: str, results: tuple[SampleResult, ...]) -> None:
     )
     if not categories:
         return
+    completed = sum(result.status is SampleStatus.COMPLETED for result in results)
     skipped = sum(result.status is SampleStatus.SKIPPED for result in results)
     logger.warning(
-        "%s: %d of %d samples failed (%s), %d skipped",
+        "%s: %d of %d samples completed, %d failed (%s), %d skipped; %s",
         metric_name,
-        categories.total(),
+        completed,
         len(results),
+        categories.total(),
         ", ".join(
             f"{category} {count}" for category, count in categories.most_common()
         ),
         skipped,
+        "the score comes from the completed samples"
+        if completed
+        else "the metric failed",
     )
 
 
