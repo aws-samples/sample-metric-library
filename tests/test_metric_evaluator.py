@@ -1800,6 +1800,77 @@ class TestAggregatorInstances:
         assert message.replace("\\", "") in results[name]["error"]
         client_factory.assert_not_called()
 
+    def test_an_error_in_reduce_keeps_the_scored_samples(self, monkeypatch, caplog):
+        @dataclass(frozen=True)
+        class NeedsEdits(Aggregator):
+            name = "needs_edits"
+
+            def reduce(self, completed):
+                # A bare float score has no details, so this raises TypeError.
+                return sum(s.details["edits"] for s in completed)
+
+        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
+        name = _register(monkeypatch, SequenceMetric)
+        client_factory, client = _sequence_client([0.1, ValueError("bad"), 0.9])
+
+        result = MetricRegistry.compute_metric(
+            name,
+            _texts(["a", "b", "c"]),
+            [],
+            configuration=EvaluationConfiguration(aggregation_method=NeedsEdits()),
+            client_factory=client_factory,
+        )
+
+        assert client.next_outcome.call_count == 3
+        assert result.status is EvaluationStatus.FAILED
+        assert result.score is None
+        assert result.aggregate.method == "needs_edits"
+        assert result.aggregate.error == "'NoneType' object is not subscriptable"
+        assert result.aggregate.error_category == "exception:TypeError"
+        assert [s.status for s in result.samples] == [
+            SampleStatus.COMPLETED,
+            SampleStatus.FAILED,
+            SampleStatus.COMPLETED,
+        ]
+        assert (result.aggregate.succeeded_count, result.aggregate.failed_count) == (
+            2,
+            1,
+        )
+        assert result.aggregate.coverage == pytest.approx(2 / 3)
+        assert result.aggregate.denominator == 2
+        # The kept samples give a score with another aggregator, without calls.
+        assert aggregate(result.samples, TopScore()).score == 0.9
+        assert client.next_outcome.call_count == 3
+        # The log names the category, not the message.
+        assert (
+            f"{name}: the aggregation failed with exception:TypeError; "
+            "its 3 sample results are kept"
+        ) in caplog.text
+
+    def test_batch_compute_returns_the_result_of_a_failed_aggregation(
+        self, monkeypatch
+    ):
+        name = _register(monkeypatch, SequenceMetric)
+        client_factory, _ = _sequence_client([1e308, 1e308])
+
+        results = MetricRegistry.batch_compute(
+            [name],
+            _texts(["a", "b"]),
+            [],
+            configuration=EvaluationConfiguration(
+                aggregation_method="weighted_mean", weights=(10.0, 10.0)
+            ),
+            client_factory=client_factory,
+        )
+
+        result = results[name]
+        assert isinstance(result, MetricEvaluationResult)
+        assert result.status is EvaluationStatus.FAILED
+        assert result.aggregate.error == "weighted aggregation must remain finite"
+        assert result.aggregate.error_category == "exception:ValueError"
+        # A failed weighted aggregation reports the weight of its completed samples.
+        assert result.aggregate.denominator == 20.0
+
     def test_a_custom_aggregator_needs_the_whole_matcher(self):
         configuration = EvaluationConfiguration(
             aggregation_method=TopScore(), matcher=LabelSet()

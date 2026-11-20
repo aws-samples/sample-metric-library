@@ -638,7 +638,7 @@ class TestAggregationResultContracts:
     """Reject aggregate states the public aggregator can never produce."""
 
     @staticmethod
-    def _failed_aggregate(succeeded_count, failed_count, skipped_count):
+    def _failed_aggregate(succeeded_count, failed_count, skipped_count, **error):
         return AggregationResult(
             method="numeric_mean",
             status=EvaluationStatus.FAILED,
@@ -649,6 +649,7 @@ class TestAggregationResultContracts:
             skipped_count=skipped_count,
             denominator=succeeded_count,
             coverage=succeeded_count / (succeeded_count + failed_count + skipped_count),
+            **error,
         )
 
     @pytest.mark.parametrize(
@@ -665,6 +666,44 @@ class TestAggregationResultContracts:
         # Completed samples give a score, in both on_sample_error modes.
         with pytest.raises(ValueError, match="requires no completed sample"):
             self._failed_aggregate(succeeded_count, failed_count, skipped_count)
+
+    def test_a_failed_aggregation_with_an_error_keeps_its_completed_samples(self):
+        result = self._failed_aggregate(
+            2, 1, 0, error="'edits'", error_category="exception:KeyError"
+        )
+
+        assert result.status is EvaluationStatus.FAILED
+        assert result.score is None
+        _assert_counts(result, total=3, succeeded=2, failed=1, skipped=0)
+        assert result.coverage == pytest.approx(2 / 3)
+
+    @pytest.mark.parametrize(
+        ("changes", "message"),
+        [
+            pytest.param(
+                {"error": "", "error_category": "exception:KeyError"},
+                "error must be a non-empty string",
+                id="blank-error",
+            ),
+            pytest.param(
+                {"error": "'edits'", "error_category": " "},
+                "error_category must be a non-empty string",
+                id="blank-category",
+            ),
+            pytest.param(
+                {"error_category": "exception:KeyError"},
+                "an error category requires an error",
+                id="category-without-error",
+            ),
+        ],
+    )
+    def test_the_error_of_an_aggregation_is_checked(self, changes, message):
+        with pytest.raises(ValueError, match=message):
+            dataclasses.replace(self._failed_aggregate(0, 1, 0), **changes)
+
+    def test_only_a_failed_aggregation_can_contain_an_error(self):
+        with pytest.raises(ValueError, match="only a failed aggregation"):
+            dataclasses.replace(_completed_aggregate(0.5), error="'edits'")
 
     def test_failed_status_accepts_several_failed_and_skipped_samples(self):
         result = AggregationResult(

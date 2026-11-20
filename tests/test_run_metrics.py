@@ -4357,6 +4357,72 @@ class TestAggregatorInstanceDefaults:
             for name, entry in output["meta"]["metrics"].items()
         } == {"ExactShare": "numeric_mean", "ExactTop": "numeric_mean"}
 
+    def test_a_failed_aggregation_keeps_the_samples_in_the_envelope(
+        self, sample_data, tmp_path
+    ):
+        plugin = tmp_path / "custom_metrics.py"
+        plugin.write_text(
+            textwrap.dedent(self.PLUGIN)
+            + textwrap.dedent("""\
+
+
+                class NeedsEdits(Aggregator):
+                    name = "needs_edits"
+
+                    def reduce(self, completed):
+                        return sum(s.details["edits"] for s in completed)
+
+
+                @MetricRegistry.register
+                class ExactEdits(Exact):
+                    \"\"\"An aggregator that reads details the metric does not write.\"\"\"
+
+                    default_aggregation_method = NeedsEdits()
+            """)
+        )
+        output_path = tmp_path / "result.json"
+
+        result = _run_evaluation(
+            sample_data,
+            output_path,
+            "ExactEdits,ExactTop",
+            "--custom-metrics-path",
+            str(plugin),
+        )
+
+        # One metric has a score and one failed: the run is partial.
+        assert result.returncode == 2, result.stderr
+        output = _full_output(result, output_path)
+        failure = (
+            "aggregation failed with exception:TypeError: "
+            "'NoneType' object is not subscriptable"
+        )
+        assert output["status"] == "partial"
+        assert output["data"]["results"] == {
+            "ExactEdits": {"error": failure},
+            "ExactTop": 1.0,
+        }
+        assert output["data"]["status"] == {
+            "ExactEdits": "failed",
+            "ExactTop": "completed",
+        }
+        assert output["errors"] == [f"ExactEdits: {failure}"]
+        # The samples of the failed aggregation are kept, with their scores.
+        assert [
+            (entry["status"], entry["score"])
+            for entry in output["data"]["samples"]["ExactEdits"]
+        ] == [("completed", 1.0), ("completed", 1.0), ("completed", 0.0)]
+        assert output["data"]["coverage"]["ExactEdits"] == {
+            "succeeded": 3,
+            "failed": 0,
+            "skipped": 0,
+            "coverage": 1.0,
+        }
+        assert (
+            "ExactEdits: the aggregation failed with exception:TypeError; "
+            "its 3 sample results are kept"
+        ) in result.stderr
+
     def test_the_list_names_each_default(self, tmp_path):
         result = _run_metrics(
             [

@@ -48,7 +48,8 @@ class EvaluationStatus(str, Enum):
     An aggregate is COMPLETED when every sample completed. It is
     PARTIAL when some samples completed and others failed or were
     skipped; its score comes from the completed samples only. It is FAILED,
-    without a score, when no sample completed.
+    without a score, when no sample completed, and when the aggregation of
+    the scored samples failed: then its ``error`` says why.
     """
 
     COMPLETED = "completed"
@@ -467,7 +468,11 @@ class AggregationResult:
     """Numeric aggregate with explicit accounting and coverage.
 
     ``method`` is the name of the built-in aggregator, or of the custom
-    ``Aggregator`` in ``spec.aggregator``.
+    ``Aggregator`` in ``spec.aggregator``. ``error`` and ``error_category``
+    say why the aggregation of the scored samples failed, as for a failed
+    sample: the message, and its kind without the message, such as
+    ``exception:KeyError``. Such an aggregate is FAILED, and its counts and
+    coverage still describe the samples, completed ones included.
     """
 
     method: AggregationMethod | str
@@ -481,6 +486,8 @@ class AggregationResult:
     coverage: float
     spec: AggregationSpec = field(default_factory=AggregationSpec)
     values: dict | None = None
+    error: str | None = None
+    error_category: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.spec, AggregationSpec):
@@ -489,6 +496,14 @@ class AggregationResult:
             raise ValueError("method must match spec.method")
         if not isinstance(self.status, EvaluationStatus):
             raise TypeError("status must be an EvaluationStatus")
+        for name in ("error", "error_category"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{name} must be a non-empty string")
+        if self.error_category is not None and self.error is None:
+            raise ValueError("an error category requires an error")
+        if self.error is not None and self.status is not EvaluationStatus.FAILED:
+            raise ValueError("only a failed aggregation can contain an error")
 
         counts = (
             self.total_count,
@@ -549,8 +564,10 @@ class AggregationResult:
                 raise ValueError(
                     "partial aggregation requires a sample that did not complete"
                 )
-        elif self.succeeded_count:
-            raise ValueError("failed aggregation requires no completed sample")
+        elif self.succeeded_count and self.error is None:
+            raise ValueError(
+                "failed aggregation requires no completed sample, or an error"
+            )
 
     def _validate_denominator(self) -> None:
         if self.method == "weighted_mean":
@@ -669,6 +686,41 @@ def _aggregate_numeric(
         denominator=aggregator._denominator(completed),
         coverage=coverage,
         spec=spec,
+    )
+
+
+def _aggregation_failure(
+    results: Sequence[SampleResult],
+    spec: AggregationSpec,
+    error: str,
+    error_category: str,
+) -> AggregationResult:
+    """The FAILED aggregate of ``results`` whose aggregation raised ``error``.
+
+    It counts the samples as their aggregation does, so the counts, the
+    coverage and the denominator describe the samples, and has no score.
+    """
+    samples = tuple(results)
+    completed = tuple(
+        sample for sample in samples if sample.status is SampleStatus.COMPLETED
+    )
+    if spec.method == "prf":
+        denominator = len(completed)
+    else:
+        denominator = spec._numeric_aggregator()._denominator(completed)
+    return AggregationResult(
+        method=spec.method,
+        status=EvaluationStatus.FAILED,
+        score=None,
+        total_count=len(samples),
+        succeeded_count=len(completed),
+        failed_count=sum(sample.status is SampleStatus.FAILED for sample in samples),
+        skipped_count=sum(sample.status is SampleStatus.SKIPPED for sample in samples),
+        denominator=denominator,
+        coverage=len(completed) / len(samples),
+        spec=spec,
+        error=error,
+        error_category=error_category,
     )
 
 

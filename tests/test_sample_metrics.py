@@ -444,12 +444,17 @@ class TestDegeneratePairs:
         assert result.samples[0].score == 1.0
 
     def test_no_labels_anywhere_fails_under_prf(self):
-        with pytest.raises(ValueError) as error:
-            _compute_metric(
-                "Accuracy", [TextData("")], [TextData("")], configuration=LABELS_PRF
-            )
+        # The aggregation fails after scoring, so the result keeps the sample.
+        result = _compute_metric(
+            "Accuracy", [TextData("")], [TextData("")], configuration=LABELS_PRF
+        )
 
-        assert str(error.value) == "no items in any prediction or reference"
+        assert result.status is EvaluationStatus.FAILED
+        assert result.score is None
+        assert result.aggregate.error == "no items in any prediction or reference"
+        assert result.aggregate.error_category == "exception:ValueError"
+        assert result.samples[0].status is SampleStatus.COMPLETED
+        assert result.samples[0].score == 1.0
 
     def test_degenerate_pair_counts_as_one_in_the_aggregate(self):
         result = _compute_metric("Accuracy", _texts(["", "a"]), _texts(["", "b"]))

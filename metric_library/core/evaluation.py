@@ -43,6 +43,7 @@ from .aggregation import (
     SampleOutput,
     SampleResult,
     SampleStatus,
+    _aggregation_failure,
     aggregate as aggregate_samples,
 )
 from .base import Metric
@@ -572,7 +573,7 @@ def evaluate_metric(
         sample_results = _continued_results(samples, outcomes)
     _log_failures(metric_name, sample_results)
     # In both modes, the score comes from the completed samples, however few.
-    aggregate = aggregate_samples(sample_results, aggregation)
+    aggregate = _aggregate_scored(metric_name, sample_results, aggregation)
     return MetricEvaluationResult(
         metric_name=metric_name,
         samples=sample_results,
@@ -716,6 +717,31 @@ def _skipped_result(sample: EvaluationSample) -> SampleResult:
         ordinal=sample.ordinal,
         status=SampleStatus.SKIPPED,
     )
+
+
+def _aggregate_scored(
+    metric_name: str,
+    results: tuple[SampleResult, ...],
+    aggregation: AggregationSpec,
+) -> AggregationResult:
+    """Aggregate the scored samples, or record why their aggregation failed.
+
+    By then every sample made its calls, so an error of the aggregation, such
+    as one that a custom ``reduce`` raises, gives a FAILED aggregate with that
+    error instead of an exception that would discard the sample results. The
+    log line names the error category, not the message, which can quote data.
+    """
+    try:
+        return aggregate_samples(results, aggregation)
+    except Exception as error:
+        category = _classify_failure(error)[1]
+        logger.warning(
+            "%s: the aggregation failed with %s; its %d sample results are kept",
+            metric_name,
+            category,
+            len(results),
+        )
+        return _aggregation_failure(results, aggregation, _safe_error(error), category)
 
 
 def _log_failures(metric_name: str, results: tuple[SampleResult, ...]) -> None:

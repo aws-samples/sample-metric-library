@@ -307,13 +307,19 @@ def _envelope_value(
 
     A completed result maps to its aggregate ``values`` object when the
     aggregator provides one (the ``prf`` aggregator), else to its finite
-    float score. A metric fails only when no sample completed, and its
+    float score. A metric fails when no sample completed, and its
     MetricError names its first failed sample by the record identifier at its
     ordinal. With ``continue``, that comes after the failure counts and the
-    ``advice``, if any.
+    ``advice``, if any. A metric also fails when the aggregation of its
+    scored samples failed, and its MetricError gives the aggregate's error.
     """
     if isinstance(result, MetricError):
         return result
+    if result.status is EvaluationStatus.FAILED and result.aggregate.error:
+        aggregate = result.aggregate
+        return MetricError(
+            f"aggregation failed with {aggregate.error_category}: {aggregate.error}"
+        )
     if result.status is EvaluationStatus.FAILED:
         failed_sample = next(
             sample for sample in result.samples if sample.status is SampleStatus.FAILED
