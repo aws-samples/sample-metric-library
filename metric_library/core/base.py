@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Callable, List, Optional
 import inspect
 
-from .aggregation import AggregationMethod, SampleOutput
+from .aggregation import AggregationMethod, Aggregator, SampleOutput
 from .data import DataType, Modality
 from .input_policy import InputPolicy
 from .multiplicity import Multiplicity
@@ -49,8 +49,9 @@ class Metric(ABC):
     prediction_multiplicity: Multiplicity = Multiplicity.SINGLE
     reference_multiplicity: Multiplicity = Multiplicity.SINGLE
 
-    # Default aggregator for the engine; None means numeric_mean
-    default_aggregation_method: AggregationMethod | None = None
+    # Default aggregator for the engine: a built-in name, or an Aggregator
+    # instance, such as Quantile(0.9) or a custom one; None means numeric_mean
+    default_aggregation_method: AggregationMethod | Aggregator | None = None
 
     # True lets the engine score up to ``max_workers`` samples at the same time,
     # calling ``compute`` of one instance from several threads; False scores

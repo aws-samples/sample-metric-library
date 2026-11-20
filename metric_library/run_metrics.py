@@ -34,6 +34,7 @@ from pathlib import Path
 
 from metric_library.core.aggregation import (
     AggregationResult,
+    Aggregator,
     EvaluationStatus,
     SampleStatus,
 )
@@ -519,8 +520,13 @@ def _metric_meta(
     ``aggregation_method`` is the metric's default when its entry is empty
     (``None`` for an unknown metric), followed by the options of that
     aggregator and of the matcher, and ``prompt_sha256`` for an LLM metric.
+    A default that is an ``Aggregator`` instance is recorded by its name; it
+    holds its own parameters, so the aggregator options do not apply to it.
     """
+    default = None
     if method is None:
+        metric_class = MetricRegistry.metrics.get(normalize_metric_name(name))
+        default = getattr(metric_class, "default_aggregation_method", None)
         try:
             method = MetricRegistry.list_metrics([name])[0][
                 "default_aggregation_method"
@@ -528,7 +534,10 @@ def _metric_meta(
         except KeyError:
             method = None
     entry = {"aggregation_method": method, "matcher": matcher}
-    if method == "quantile":
+    if isinstance(default, Aggregator):
+        # Such as Quantile(0.9): the --quantile option is not its parameter.
+        pass
+    elif method == "quantile":
         entry["quantile"] = args.quantile
     elif method == "weighted_mean":
         entry["weight_key"] = args.weight_key

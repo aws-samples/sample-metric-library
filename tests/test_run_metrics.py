@@ -4258,6 +4258,123 @@ class TestListMetrics:
         assert result.stdout == ""
 
 
+class TestAggregatorInstanceDefaults:
+    """A plugin metric can default to an Aggregator instance, built-in or custom.
+
+    Both plugin metrics score ``1.0, 1.0, 0.0`` on ``sample_data``.
+    """
+
+    PLUGIN = """\
+        from dataclasses import dataclass
+
+        from metric_library import Aggregator
+        from metric_library.core.aggregation import Quantile
+        from metric_library.core.base import Metric
+        from metric_library.core.registry import MetricRegistry
+
+
+        @dataclass(frozen=True)
+        class ShareAtLeast(Aggregator):
+            threshold: float
+            name = "share_at_least"
+
+            def reduce(self, completed):
+                passed = sum(s.score >= self.threshold for s in completed)
+                return passed / len(completed)
+
+
+        class Exact(Metric):
+            def compute(self, sample, client):
+                prediction = sample.prediction.get_raw_data()
+                return float(prediction == sample.reference.get_raw_data())
+
+
+        @MetricRegistry.register
+        class ExactShare(Exact):
+            \"\"\"The share of exact matches, by a custom aggregator.\"\"\"
+
+            default_aggregation_method = ShareAtLeast(1.0)
+
+
+        @MetricRegistry.register
+        class ExactTop(Exact):
+            \"\"\"The highest exact-match score, by Quantile(1.0).\"\"\"
+
+            default_aggregation_method = Quantile(1.0)
+    """
+
+    def _plugin(self, tmp_path):
+        path = tmp_path / "custom_metrics.py"
+        path.write_text(textwrap.dedent(self.PLUGIN))
+        return str(path)
+
+    def test_the_run_scores_and_records_each_default(self, sample_data, tmp_path):
+        output_path = tmp_path / "result.json"
+
+        result = _run_evaluation(
+            sample_data,
+            output_path,
+            "ExactShare,ExactTop",
+            "--custom-metrics-path",
+            self._plugin(tmp_path),
+        )
+
+        assert result.returncode == 0, result.stderr
+        output = _full_output(result, output_path)
+        assert output["data"]["results"] == {
+            "ExactShare": pytest.approx(2 / 3),
+            "ExactTop": 1.0,
+        }
+        # An instance holds its parameters, so no --quantile entry is recorded.
+        assert output["meta"]["metrics"] == {
+            "ExactShare": {"aggregation_method": "share_at_least", "matcher": "whole"},
+            "ExactTop": {"aggregation_method": "quantile", "matcher": "whole"},
+        }
+
+    def test_an_aggregator_on_the_command_line_beats_the_default(
+        self, sample_data, tmp_path
+    ):
+        output_path = tmp_path / "result.json"
+
+        result = _run_evaluation(
+            sample_data,
+            output_path,
+            "ExactShare,ExactTop",
+            "--custom-metrics-path",
+            self._plugin(tmp_path),
+            "--aggregation-methods",
+            "numeric_mean",
+        )
+
+        assert result.returncode == 0, result.stderr
+        output = _full_output(result, output_path)
+        assert output["data"]["results"] == {
+            "ExactShare": pytest.approx(2 / 3),
+            "ExactTop": pytest.approx(2 / 3),
+        }
+        assert {
+            name: entry["aggregation_method"]
+            for name, entry in output["meta"]["metrics"].items()
+        } == {"ExactShare": "numeric_mean", "ExactTop": "numeric_mean"}
+
+    def test_the_list_names_each_default(self, tmp_path):
+        result = _run_metrics(
+            [
+                "--list-metrics",
+                "--metrics",
+                "ExactShare,ExactTop",
+                "--custom-metrics-path",
+                self._plugin(tmp_path),
+            ]
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert [
+            (entry["name"], entry["default_aggregation_method"])
+            for entry in json.loads(result.stdout)
+        ] == [("ExactShare", "share_at_least"), ("ExactTop", "quantile")]
+
+
 class TestCustomMetricsNoOp:
     """Verify the no-op custom_metrics.py at the repo root."""
 

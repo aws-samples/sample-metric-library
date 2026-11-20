@@ -18,7 +18,7 @@ import threading
 import time
 import warnings
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from unittest.mock import Mock, call
 
 import pytest
@@ -56,6 +56,13 @@ from metric_library import (
     prf,
     quantile,
     weighted_mean,
+)
+from metric_library.core.aggregation import (
+    AggregationSpec,
+    Aggregator,
+    Quantile,
+    WeightedMean,
+    aggregate,
 )
 from metric_library.core.base import Metric
 from metric_library.core.data import Modality, factory
@@ -1547,6 +1554,292 @@ class TestAggregationMethodDispatch:
             )
 
         client_factory.assert_not_called()
+
+
+@dataclass(frozen=True)
+class TopScore(Aggregator):
+    """Fixture: a custom aggregator, the highest completed score."""
+
+    name = "top_score"
+
+    def reduce(self, completed):
+        return max(sample.score for sample in completed)
+
+
+@dataclass(frozen=True)
+class NamedLike(Aggregator):
+    """Fixture: a custom aggregator under any ``name``, right or wrong."""
+
+    name: str
+
+    def reduce(self, completed):
+        return 0.0
+
+
+class QuantileByDefaultMetric(SequenceMetric):
+    """Fixture: ``SequenceMetric`` whose default aggregator is ``Quantile(1.0)``."""
+
+    default_aggregation_method = Quantile(1.0)
+
+
+class TopScoreByDefaultMetric(SequenceMetric):
+    """Fixture: ``SequenceMetric`` whose default aggregator is a custom one."""
+
+    default_aggregation_method = TopScore()
+
+
+class ClassByDefaultMetric(SequenceMetric):
+    """Fixture: names the ``Quantile`` class, not an instance, as its default."""
+
+    default_aggregation_method = Quantile
+
+
+def _no_client():
+    return Mock(side_effect=AssertionError("client must not run"))
+
+
+class TestAggregatorInstances:
+    """A caller or a metric chooses an aggregator as an Aggregator instance.
+
+    A built-in instance, such as ``Quantile(0.5)``, is its name and its
+    parameters; a custom one is scored by its own ``reduce``. The scores below
+    come from ``SequenceMetric`` with the outcomes 0.1, 0.2 and 0.9.
+    """
+
+    def _evaluate(self, monkeypatch, metric_class, configuration, outcomes=None):
+        _register(monkeypatch, metric_class)
+        client_factory, _ = _sequence_client(outcomes or [0.1, 0.2, 0.9])
+        return MetricRegistry.compute_metric(
+            metric_class.__name__,
+            _texts(["a", "b", "c"]),
+            [],
+            configuration=configuration,
+            client_factory=client_factory,
+        )
+
+    def test_a_built_in_instance_is_its_name_and_parameter(self, monkeypatch):
+        by_instance = self._evaluate(
+            monkeypatch,
+            SequenceMetric,
+            EvaluationConfiguration(aggregation_method=Quantile(0.5)),
+        )
+        by_name = self._evaluate(
+            monkeypatch,
+            SequenceMetric,
+            EvaluationConfiguration(aggregation_method="quantile", quantile=0.5),
+        )
+
+        assert by_instance.aggregate == by_name.aggregate
+        assert by_instance.aggregate.method == "quantile"
+        assert by_instance.score == pytest.approx(0.2)
+
+    def test_a_custom_instance_reduces_the_completed_samples(self, monkeypatch):
+        result = self._evaluate(
+            monkeypatch,
+            SequenceMetric,
+            EvaluationConfiguration(aggregation_method=TopScore()),
+            outcomes=[0.1, ValueError("judge returned no score"), 0.9],
+        )
+
+        assert result.aggregate.method == "top_score"
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.score == 0.9
+        assert result.aggregate.coverage == pytest.approx(2 / 3)
+        assert result.aggregate == aggregate(result.samples, TopScore())
+
+    @pytest.mark.parametrize(
+        ("metric_class", "method", "score"),
+        [
+            pytest.param(QuantileByDefaultMetric, "quantile", 0.9, id="built-in"),
+            pytest.param(TopScoreByDefaultMetric, "top_score", 0.9, id="custom"),
+        ],
+    )
+    def test_a_metric_defaults_to_an_instance(
+        self, monkeypatch, metric_class, method, score
+    ):
+        result = self._evaluate(monkeypatch, metric_class, None)
+
+        assert result.aggregate.method == method
+        assert result.score == pytest.approx(score)
+
+    def test_a_metric_default_instance_keeps_its_parameter(self, monkeypatch):
+        result = self._evaluate(monkeypatch, QuantileByDefaultMetric, None)
+
+        assert result.aggregate.spec == AggregationSpec(method="quantile", quantile=1.0)
+
+    @pytest.mark.parametrize(
+        ("metric_class", "configuration", "method", "score"),
+        [
+            pytest.param(
+                TopScoreByDefaultMetric,
+                EvaluationConfiguration(aggregation_method="median"),
+                "median",
+                0.2,
+                id="name-beats-instance-default",
+            ),
+            pytest.param(
+                MedianByDefaultMetric,
+                EvaluationConfiguration(aggregation_method=TopScore()),
+                "top_score",
+                0.9,
+                id="instance-beats-name-default",
+            ),
+            pytest.param(
+                QuantileByDefaultMetric,
+                EvaluationConfiguration(aggregation_method=Quantile(0.0)),
+                "quantile",
+                0.1,
+                id="instance-beats-instance-default",
+            ),
+        ],
+    )
+    def test_the_caller_choice_beats_the_metric_default(
+        self, monkeypatch, metric_class, configuration, method, score
+    ):
+        result = self._evaluate(monkeypatch, metric_class, configuration)
+
+        assert result.aggregate.method == method
+        assert result.score == pytest.approx(score)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "error", "message"),
+        [
+            pytest.param(
+                {"aggregation_method": Quantile},
+                TypeError,
+                r"not the class Quantile; use Quantile\(\)",
+                id="built-in-class",
+            ),
+            pytest.param(
+                {"aggregation_method": TopScore},
+                TypeError,
+                r"not the class TopScore; use TopScore\(\)",
+                id="custom-class",
+            ),
+            pytest.param(
+                {"aggregation_method": Quantile(0.5), "quantile": 0.5},
+                ValueError,
+                "set the parameters of quantile on the aggregator or on the spec",
+                id="built-in-instance-and-parameter",
+            ),
+            pytest.param(
+                {"aggregation_method": TopScore(), "weights": (1.0,)},
+                ValueError,
+                "top_score does not accept aggregation parameters",
+                id="custom-instance-and-parameter",
+            ),
+            pytest.param(
+                {"aggregation_method": NamedLike("Top Score")},
+                ValueError,
+                "must have lowercase letters, digits and underscores",
+                id="bad-name",
+            ),
+            pytest.param(
+                {"aggregation_method": NamedLike("median")},
+                ValueError,
+                "'median' is a built-in aggregator",
+                id="built-in-name",
+            ),
+        ],
+    )
+    def test_a_wrong_caller_aggregator_fails_at_construction(
+        self, kwargs, error, message
+    ):
+        with pytest.raises(error, match=message):
+            EvaluationConfiguration(**kwargs)
+
+    @pytest.mark.parametrize(
+        ("metric_class", "configuration", "error", "message"),
+        [
+            pytest.param(
+                ClassByDefaultMetric,
+                None,
+                TypeError,
+                r"not the class Quantile; use Quantile\(\)",
+                id="class-as-metric-default",
+            ),
+            pytest.param(
+                QuantileByDefaultMetric,
+                EvaluationConfiguration(quantile=0.5),
+                ValueError,
+                "set the parameters of quantile on the aggregator or on the spec",
+                id="parameter-for-an-instance-default",
+            ),
+            pytest.param(
+                SequenceMetric,
+                EvaluationConfiguration(aggregation_method=WeightedMean((1.0, 2.0))),
+                ValueError,
+                "weights must align one-for-one with all samples",
+                id="weights-of-an-instance",
+            ),
+        ],
+    )
+    def test_a_wrong_aggregator_fails_before_any_compute_call(
+        self, monkeypatch, metric_class, configuration, error, message
+    ):
+        name = _register(monkeypatch, metric_class)
+        client_factory = _no_client()
+
+        with pytest.raises(error, match=message):
+            MetricRegistry.compute_metric(
+                name,
+                _texts(["a", "b", "c"]),
+                [],
+                configuration=configuration,
+                client_factory=client_factory,
+            )
+        client_factory.assert_not_called()
+
+        results = MetricRegistry.batch_compute(
+            [name],
+            _texts(["a", "b", "c"]),
+            [],
+            configuration=configuration,
+            client_factory=client_factory,
+        )
+        assert message.replace("\\", "") in results[name]["error"]
+        client_factory.assert_not_called()
+
+    def test_a_custom_aggregator_needs_the_whole_matcher(self):
+        configuration = EvaluationConfiguration(
+            aggregation_method=TopScore(), matcher=LabelSet()
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="the labels and list matchers require the prf aggregation method",
+        ):
+            MetricRegistry.compute_metric(
+                "Accuracy",
+                _texts(["a", "b"]),
+                _texts(["a", "c"]),
+                configuration=configuration,
+                client_factory=_no_client(),
+            )
+
+    def test_listing_shows_the_name_of_an_instance_default(self, monkeypatch):
+        names = [
+            _register(monkeypatch, metric_class)
+            for metric_class in (
+                QuantileByDefaultMetric,
+                TopScoreByDefaultMetric,
+                MedianByDefaultMetric,
+                SequenceMetric,
+            )
+        ]
+
+        listed = {
+            entry["name"]: entry["default_aggregation_method"]
+            for entry in MetricRegistry.list_metrics(names)
+        }
+
+        assert listed == {
+            "QuantileByDefaultMetric": "quantile",
+            "TopScoreByDefaultMetric": "top_score",
+            "MedianByDefaultMetric": "median",
+            "SequenceMetric": "numeric_mean",
+        }
+        json.dumps(MetricRegistry.list_metrics(names))
 
 
 class TestSampleOutputUnwrapping:

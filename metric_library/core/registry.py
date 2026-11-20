@@ -46,6 +46,20 @@ def normalize_metric_name(name):
     return re.sub(r"[^a-zA-Z0-9]", "", name).lower()
 
 
+def _aggregator_label(default: object) -> str:
+    """The name to list for a metric's default aggregator, always a string.
+
+    A name is listed as it is, ``None`` as ``numeric_mean``, and an
+    ``Aggregator`` instance by its ``name``, so the listing stays JSON. Any
+    other value is listed by its ``name`` when it has one, else by its repr;
+    evaluating the metric reports a wrong value.
+    """
+    if default is None or isinstance(default, str):
+        return default or "numeric_mean"
+    name = getattr(default, "name", None)
+    return name if isinstance(name, str) else repr(default)
+
+
 def normalize_name(func):
     """Decorator to normalize metric names in method arguments."""
 
@@ -189,8 +203,8 @@ class MetricRegistry(metaclass=MetricRegistryMeta):
                     "reference": InputPolicy(metric_class.reference_policy).value,
                     "prompt": InputPolicy(metric_class.prompt_policy).value,
                     "context": InputPolicy(metric_class.context_policy).value,
-                    "default_aggregation_method": (
-                        metric_class.default_aggregation_method or "numeric_mean"
+                    "default_aggregation_method": _aggregator_label(
+                        metric_class.default_aggregation_method
                     ),
                     "description": doc.strip().splitlines()[0] if doc.strip() else "",
                 }

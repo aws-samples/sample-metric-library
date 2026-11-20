@@ -37,6 +37,7 @@ from .aggregation import (
     AggregationMethod,
     AggregationResult,
     AggregationSpec,
+    Aggregator,
     EvaluationStatus,
     Matches,
     SampleOutput,
@@ -190,11 +191,14 @@ class EvaluationConfiguration:
     Retries wait ``min(max_delay, initial_delay * multiplier ** (n - 1))``
     seconds after the ``n``-th failed attempt.
 
-    When ``aggregation_method`` is set, construction validates it together
-    with ``weights``, ``quantile`` and ``thresholds`` through
-    ``AggregationSpec``. ``resolve`` validates the weight count against the
-    sample count, and validates parameters given without a method against the
-    metric's default aggregator.
+    ``aggregation_method`` is the name of a built-in aggregator or an
+    ``Aggregator`` instance: a built-in one, such as ``Quantile(0.9)``, or a
+    custom one. When it is set, construction validates it together with
+    ``weights``, ``quantile`` and ``thresholds`` through ``AggregationSpec``;
+    an instance holds its own parameters and takes none of these.
+    ``resolve`` validates the weight count against the sample count, and
+    validates parameters given without a method against the metric's default
+    aggregator, which is a name or an instance too.
 
     ``matcher`` gives the items of each value to the metric. ``WholeValue``,
     the default, scores each sample as it is. ``LabelSet`` and ``ListItems``
@@ -214,7 +218,7 @@ class EvaluationConfiguration:
     """
 
     max_attempts: int = 3
-    aggregation_method: AggregationMethod | None = None
+    aggregation_method: AggregationMethod | Aggregator | None = None
     weights: tuple[float, ...] | None = None
     quantile: float | None = None
     initial_delay: float = 1.0
@@ -269,12 +273,7 @@ class EvaluationConfiguration:
             raise TypeError("matcher must be a Matcher")
 
         if self.aggregation_method is not None:
-            AggregationSpec(
-                method=self.aggregation_method,
-                weights=self.weights,
-                quantile=self.quantile,
-                thresholds=self.thresholds,
-            )
+            self._spec_for(self.aggregation_method)
 
     def resolve(self, metric: Metric, total_count: int) -> AggregationSpec:
         """Resolve caller overrides and metric metadata into a validated spec."""
@@ -284,14 +283,29 @@ class EvaluationConfiguration:
         if method is None:
             method = "numeric_mean"
 
-        aggregation = AggregationSpec(
+        aggregation = self._spec_for(method)
+        aggregation.validate_for(total_count)
+        return aggregation
+
+    def _spec_for(self, method: object) -> AggregationSpec:
+        """The spec of a method name or an ``Aggregator``, with the parameters."""
+        if isinstance(method, Aggregator) or (
+            isinstance(method, type) and issubclass(method, Aggregator)
+        ):
+            # The spec checks the aggregator and its name, and refuses a class.
+            return AggregationSpec(
+                method=getattr(method, "name", None),
+                weights=self.weights,
+                quantile=self.quantile,
+                thresholds=self.thresholds,
+                aggregator=method,
+            )
+        return AggregationSpec(
             method=method,
             weights=self.weights,
             quantile=self.quantile,
             thresholds=self.thresholds,
         )
-        aggregation.validate_for(total_count)
-        return aggregation
 
 
 @dataclass(frozen=True)
