@@ -74,11 +74,13 @@ ARRAY_REFERENCES = images([np.zeros(4), np.zeros(4), np.zeros(4)])
 CONTEXT = [_texts(["context-0", "context-1", "context-2"])]
 PROMPTS = _texts(["question-0", "question-1", "question-2"])
 
-# The public contract: the 23 names of the single engine and the matchers.
+# The public contract: the 24 names of the single engine, the matchers and
+# the base class of custom aggregators.
 PUBLIC_EXPORTS = [
     "AggregationMethod",
     "AggregationResult",
     "AggregationSpec",
+    "Aggregator",
     "DataHandler",
     "EvaluationConfiguration",
     "EvaluationSample",

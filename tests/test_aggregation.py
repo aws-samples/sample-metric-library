@@ -15,6 +15,7 @@ import metric_library.metrics  # noqa: F401 - registers built-in metrics
 from metric_library.core.aggregation import (
     AggregationResult,
     AggregationSpec,
+    Aggregator,
     EvaluationStatus,
     Matches,
     SampleOutput,
@@ -1137,6 +1138,202 @@ class TestMedianAndQuantile:
             3,
         )
         assert (top.status, top.score) == (EvaluationStatus.PARTIAL, 0.9)
+
+
+class MeanOfSquares(Aggregator):
+    """The mean of the squared completed scores; records the samples of each call."""
+
+    name = "mean_of_squares"
+
+    def __init__(self):
+        self.calls = []
+
+    def reduce(self, completed):
+        self.calls.append(completed)
+        return sum(sample.score**2 for sample in completed) / len(completed)
+
+
+@dataclasses.dataclass(frozen=True)
+class ShareAtLeast(Aggregator):
+    """The share of the completed scores of ``threshold`` or more."""
+
+    threshold: float
+    name = "share_at_least"
+
+    def reduce(self, completed):
+        return sum(s.score >= self.threshold for s in completed) / len(completed)
+
+
+class Returns(Aggregator):
+    """Returns ``value`` from ``reduce``, whatever it is."""
+
+    name = "returns"
+
+    def __init__(self, value):
+        self.value = value
+
+    def reduce(self, completed):
+        return self.value
+
+
+class TestCustomAggregator:
+    """A custom Aggregator reduces the completed samples; aggregation counts the rest."""
+
+    def test_reduces_the_completed_samples_in_input_order(self):
+        results = (
+            _completed(0, 0.5),
+            _failed(1),
+            _completed(2, 1.0),
+            _skipped(3),
+        )
+        aggregator = MeanOfSquares()
+        spec = AggregationSpec(method="mean_of_squares", aggregator=aggregator)
+
+        result = aggregate(results, spec)
+
+        assert aggregator.calls == [(results[0], results[2])]
+        assert result.method == "mean_of_squares"
+        assert result.spec.aggregator is aggregator
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.score == pytest.approx(0.625)
+        assert result.denominator == 2
+        assert result.coverage == 0.5
+        assert result.values is None
+        _assert_counts(result, total=4, succeeded=2, failed=1, skipped=1)
+
+    def test_every_completed_sample_gives_a_completed_aggregate(self):
+        result = aggregate((_completed(0, 0.2), _completed(1, 0.4)), MeanOfSquares())
+
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == pytest.approx(0.1)
+        assert result.coverage == 1.0
+
+    def test_reduce_is_not_called_when_no_sample_completed(self):
+        aggregator = MeanOfSquares()
+
+        result = aggregate((_failed(0), _skipped(1)), aggregator)
+
+        assert aggregator.calls == []
+        assert result.status is EvaluationStatus.FAILED
+        assert result.score is None
+        assert result.denominator == 0
+
+    def test_an_aggregator_is_its_spec(self):
+        results = (_completed(0, 0.1), _completed(1, 0.9), _completed(2, 0.6))
+        aggregator = ShareAtLeast(0.5)
+
+        result = aggregate(results, aggregator)
+
+        assert result == aggregate(
+            results, AggregationSpec(method="share_at_least", aggregator=aggregator)
+        )
+        assert result.score == pytest.approx(2 / 3)
+        # A frozen dataclass compares by its parameters.
+        assert result == aggregate(results, ShareAtLeast(0.5))
+        assert result != aggregate(results, ShareAtLeast(0.7))
+
+    @pytest.mark.parametrize(
+        ("value", "error", "message"),
+        [
+            (float("nan"), ValueError, "must return a finite score, got nan"),
+            (float("inf"), ValueError, "must return a finite score, got inf"),
+            (10**400, ValueError, "must return a finite score"),
+            ("0.5", TypeError, "must return a real number, got '0.5'"),
+            (True, TypeError, "must return a real number, got True"),
+            (None, TypeError, "must return a real number, got None"),
+        ],
+    )
+    def test_reduce_must_return_a_finite_real(self, value, error, message):
+        with pytest.raises(error, match=f"aggregator 'returns' {message}"):
+            aggregate((_completed(0, 0.5),), Returns(value))
+
+    def test_a_real_number_is_stored_as_a_float(self):
+        result = aggregate((_completed(0, 0.5),), Returns(Fraction(1, 4)))
+
+        assert result.score == 0.25
+        assert isinstance(result.score, float)
+
+    def test_an_error_in_reduce_reaches_the_caller(self):
+        class Broken(Aggregator):
+            name = "broken"
+
+            def reduce(self, completed):
+                raise ZeroDivisionError("division by zero")
+
+        with pytest.raises(ZeroDivisionError, match="division by zero"):
+            aggregate((_completed(0, 0.5),), Broken())
+
+    def test_a_subclass_without_reduce_cannot_be_created(self):
+        class NoReduce(Aggregator):
+            name = "no_reduce"
+
+        with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+            NoReduce()
+
+    def test_a_custom_name_without_its_aggregator_is_unknown(self):
+        with pytest.raises(ValueError, match="unknown aggregation method"):
+            AggregationSpec(method="mean_of_squares")
+
+    @pytest.mark.parametrize(
+        ("kwargs", "error", "message"),
+        [
+            pytest.param(
+                {"method": "mean_of_squares", "aggregator": MeanOfSquares},
+                TypeError,
+                r"not the class MeanOfSquares; use MeanOfSquares\(\)",
+                id="class-not-instance",
+            ),
+            pytest.param(
+                {"method": "x", "aggregator": len},
+                TypeError,
+                "aggregator must be an Aggregator",
+                id="not-an-aggregator",
+            ),
+            pytest.param(
+                {"method": "median", "aggregator": MeanOfSquares()},
+                ValueError,
+                "method must be the aggregator name 'mean_of_squares', got 'median'",
+                id="method-is-not-the-name",
+            ),
+            pytest.param(
+                {
+                    "method": "mean_of_squares",
+                    "aggregator": MeanOfSquares(),
+                    "quantile": 0.5,
+                },
+                ValueError,
+                "mean_of_squares does not accept aggregation parameters",
+                id="parameters",
+            ),
+        ],
+    )
+    def test_spec_rejects_a_wrong_aggregator(self, kwargs, error, message):
+        with pytest.raises(error, match=message):
+            AggregationSpec(**kwargs)
+
+    @pytest.mark.parametrize(
+        ("name", "error", "message"),
+        [
+            (None, TypeError, "NamedAs must set name to a string"),
+            ("", ValueError, "must have lowercase letters, digits and underscores"),
+            ("Pooled", ValueError, "must have lowercase letters"),
+            ("pooled-wer", ValueError, "must have lowercase letters"),
+            ("pooled wer", ValueError, "must have lowercase letters"),
+            ("1st", ValueError, "must have lowercase letters"),
+            ("median", ValueError, "'median' is a built-in aggregator"),
+            ("prf", ValueError, "'prf' is a built-in aggregator"),
+        ],
+    )
+    def test_aggregator_names_follow_the_built_in_style(self, name, error, message):
+        class NamedAs(Aggregator):
+            def reduce(self, completed):
+                return 0.0
+
+        if name is not None:
+            NamedAs.name = name
+
+        with pytest.raises(error, match=message):
+            aggregate((_completed(0, 0.5),), NamedAs())
 
 
 class TestPrfAggregators:

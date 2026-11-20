@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import math
+import re
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from numbers import Real
-from typing import Any, Literal, Sequence, TypeAlias
+from typing import Any, ClassVar, Literal, Sequence, TypeAlias
 
 from munkres import Munkres, make_cost_matrix
 
@@ -183,16 +185,51 @@ class SampleResult:
             raise ValueError("skipped samples cannot contain an error")
 
 
+# A custom aggregator's name reads like a built-in one: lowercase letters,
+# digits and underscores, starting with a letter.
+_AGGREGATOR_NAME = re.compile(r"[a-z][a-z0-9_]*")
+
+
+class Aggregator(ABC):
+    """Base class of a custom aggregator: the final score of a metric's samples.
+
+    A subclass sets ``name`` and implements ``reduce``. Aggregation counts the
+    sample statuses as it does for the built-in aggregators and calls
+    ``reduce`` with the completed samples, in input order, only when at least
+    one sample completed. The result is PARTIAL when some samples did not
+    complete, and FAILED, without a call to ``reduce``, when none did.
+
+    ``name`` has lowercase letters, digits and underscores, starts with a
+    letter, and is not the name of a built-in aggregator; the result reports
+    it as its ``method``. One instance can serve many evaluations, so
+    ``reduce`` keeps no state between calls.
+    """
+
+    name: ClassVar[str]
+
+    @abstractmethod
+    def reduce(self, completed: tuple[SampleResult, ...]) -> float:
+        """Return the final score of the completed samples, a finite real."""
+
+
 @dataclass(frozen=True)
 class AggregationSpec:
-    """Closed configuration for the supported numeric aggregators."""
+    """Configuration of one aggregation.
 
-    method: AggregationMethod = "numeric_mean"
+    A built-in aggregator is a ``method`` and its parameters. A custom one is
+    an ``aggregator`` with ``method`` set to its name and no parameters.
+    """
+
+    method: AggregationMethod | str = "numeric_mean"
     weights: tuple[float, ...] | None = None
     quantile: float | None = None
     thresholds: tuple[float, ...] | None = None
+    aggregator: Aggregator | None = None
 
     def __post_init__(self) -> None:
+        if self.aggregator is not None:
+            self._validate_custom()
+            return
         if self.method not in _METHODS:
             raise ValueError(f"unknown aggregation method: {self.method!r}")
 
@@ -247,6 +284,28 @@ class AggregationSpec:
         ):
             raise ValueError(f"{self.method} does not accept aggregation parameters")
 
+    def _validate_custom(self) -> None:
+        """Check a custom aggregator, its name as the method and no parameters."""
+        aggregator = self.aggregator
+        if isinstance(aggregator, type) and issubclass(aggregator, Aggregator):
+            raise TypeError(
+                "aggregator must be an Aggregator instance, not the class "
+                f"{aggregator.__name__}; use {aggregator.__name__}()"
+            )
+        if not isinstance(aggregator, Aggregator):
+            raise TypeError(f"aggregator must be an Aggregator, got {aggregator!r}")
+        name = _aggregator_name(aggregator)
+        if self.method != name:
+            raise ValueError(
+                f"method must be the aggregator name {name!r}, got {self.method!r}"
+            )
+        if (
+            self.weights is not None
+            or self.quantile is not None
+            or self.thresholds is not None
+        ):
+            raise ValueError(f"{name} does not accept aggregation parameters")
+
     def validate_for(self, total_count: int) -> None:
         """Validate parameters that depend on the complete sample count."""
         if isinstance(total_count, bool) or not isinstance(total_count, int):
@@ -263,9 +322,13 @@ class AggregationSpec:
 
 @dataclass(frozen=True)
 class AggregationResult:
-    """Numeric aggregate with explicit accounting and coverage."""
+    """Numeric aggregate with explicit accounting and coverage.
 
-    method: AggregationMethod
+    ``method`` is the name of the built-in aggregator, or of the custom
+    ``Aggregator`` in ``spec.aggregator``.
+    """
+
+    method: AggregationMethod | str
     status: EvaluationStatus
     score: float | None
     total_count: int
@@ -411,13 +474,17 @@ def prf(
 
 def aggregate(
     results: Sequence[SampleResult],
-    spec: AggregationSpec,
+    spec: AggregationSpec | Aggregator,
 ) -> AggregationResult:
     """Aggregate the completed samples of ``results`` with ``spec``.
 
     The aggregate is COMPLETED when every sample completed, PARTIAL
     when only some did, and FAILED, without a score, when none did.
+    An ``Aggregator`` in place of ``spec`` is the ``AggregationSpec`` with
+    that aggregator and its name as the method.
     """
+    if isinstance(spec, Aggregator):
+        spec = AggregationSpec(method=_aggregator_name(spec), aggregator=spec)
     if spec.method == "prf":
         return _aggregate_prf(results, spec)
     return _aggregate_numeric(results, spec)
@@ -467,6 +534,8 @@ def _reduce_successful(
     samples = tuple(completed)
     if not samples:
         return None, 0.0 if spec.method == "weighted_mean" else 0
+    if spec.aggregator is not None:
+        return _custom_score(spec.aggregator, samples), len(samples)
 
     scores = tuple(sample.score for sample in samples)
     if spec.method == "numeric_mean":
@@ -593,6 +662,36 @@ def _prf_trio(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
     return precision, recall, f1
 
 
+def _aggregator_name(aggregator: Aggregator) -> str:
+    """Return the ``name`` of a custom aggregator, checked against the rules."""
+    name = getattr(aggregator, "name", None)
+    if not isinstance(name, str):
+        raise TypeError(f"{type(aggregator).__name__} must set name to a string")
+    if not _AGGREGATOR_NAME.fullmatch(name):
+        raise ValueError(
+            f"aggregator name {name!r} must have lowercase letters, digits and "
+            "underscores, starting with a letter"
+        )
+    if name in _METHODS:
+        raise ValueError(f"aggregator name {name!r} is a built-in aggregator")
+    return name
+
+
+def _custom_score(aggregator: Aggregator, completed: tuple[SampleResult, ...]) -> float:
+    """Return what ``reduce`` gives for the completed samples, checked as a score."""
+    score = aggregator.reduce(completed)
+    try:
+        return _validate_score(score)
+    except TypeError:
+        raise TypeError(
+            f"aggregator {aggregator.name!r} must return a real number, got {score!r}"
+        ) from None
+    except (ValueError, OverflowError):
+        raise ValueError(
+            f"aggregator {aggregator.name!r} must return a finite score, got {score!r}"
+        ) from None
+
+
 def _validate_score(score: object) -> float:
     """Accept any finite real score; each metric owns its own range."""
     if isinstance(score, bool) or not isinstance(score, Real):
@@ -694,6 +793,7 @@ def validate_fail_fast_sequence(results: tuple[SampleResult, ...]) -> None:
 __all__ = [
     "aggregate",
     "validate_fail_fast_sequence",
+    "Aggregator",
     "AggregationMethod",
     "AggregationResult",
     "AggregationSpec",
