@@ -9,7 +9,7 @@ import math
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from numbers import Real
 from typing import Any, ClassVar, Literal, Sequence, TypeAlias
@@ -191,17 +191,18 @@ _AGGREGATOR_NAME = re.compile(r"[a-z][a-z0-9_]*")
 
 
 class Aggregator(ABC):
-    """Base class of a custom aggregator: the final score of a metric's samples.
+    """Base class of a numeric aggregator: the final score of a metric's samples.
 
-    A subclass sets ``name`` and implements ``reduce``. Aggregation counts the
-    sample statuses as it does for the built-in aggregators and calls
-    ``reduce`` with the completed samples, in input order, only when at least
-    one sample completed. The result is PARTIAL when some samples did not
-    complete, and FAILED, without a call to ``reduce``, when none did.
+    The built-in ``NumericMean``, ``WeightedMean``, ``Median`` and
+    ``Quantile`` subclass it, and so does a custom aggregator. A subclass sets
+    ``name`` and implements ``reduce``. Aggregation counts the sample statuses
+    and calls ``reduce`` with the completed samples, in input order, only when
+    at least one sample completed. The result is PARTIAL when some samples did
+    not complete, and FAILED, without a call to ``reduce``, when none did.
 
-    ``name`` has lowercase letters, digits and underscores, starts with a
-    letter, and is not the name of a built-in aggregator; the result reports
-    it as its ``method``. One instance can serve many evaluations, so
+    ``name`` has lowercase letters, digits and underscores and starts with a
+    letter; the result reports it as its ``method``. Only the built-in classes
+    use the built-in names. One instance can serve many evaluations, so
     ``reduce`` keeps no state between calls.
     """
 
@@ -211,13 +212,112 @@ class Aggregator(ABC):
     def reduce(self, completed: tuple[SampleResult, ...]) -> float:
         """Return the final score of the completed samples, a finite real."""
 
+    def _denominator(self, completed: tuple[SampleResult, ...]) -> int | float:
+        """What the score stands for: the number of completed samples.
+
+        ``WeightedMean`` reports their weight sum instead.
+        """
+        return len(completed)
+
+
+@dataclass(frozen=True)
+class NumericMean(Aggregator):
+    """The arithmetic mean of the completed scores."""
+
+    name = "numeric_mean"
+
+    def reduce(self, completed: tuple[SampleResult, ...]) -> float:
+        scores = tuple(sample.score for sample in completed)
+        return sum(scores) / len(scores)
+
+
+@dataclass(frozen=True)
+class WeightedMean(Aggregator):
+    """The mean of the completed scores, each weighted by the weight of its sample.
+
+    ``weights`` holds one strictly positive weight per sample, all samples
+    included, in input order: a completed sample reads the weight at its
+    ordinal. The denominator is the weight sum of the completed samples.
+    """
+
+    weights: tuple[float, ...]
+    name = "weighted_mean"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "weights", _validate_weights(self.weights))
+
+    def reduce(self, completed: tuple[SampleResult, ...]) -> float:
+        denominator = self._denominator(completed)
+        numerator = sum(
+            sample.score * self.weights[sample.ordinal] for sample in completed
+        )
+        if not math.isfinite(denominator) or not math.isfinite(numerator):
+            raise ValueError("weighted aggregation must remain finite")
+        return numerator / denominator
+
+    def _denominator(self, completed: tuple[SampleResult, ...]) -> float:
+        return sum(self.weights[sample.ordinal] for sample in completed)
+
+
+@dataclass(frozen=True)
+class Median(Aggregator):
+    """The median of the completed scores.
+
+    With an even count, it is the mean of the two middle scores.
+    """
+
+    name = "median"
+
+    def reduce(self, completed: tuple[SampleResult, ...]) -> float:
+        ordered = sorted(sample.score for sample in completed)
+        midpoint = len(ordered) // 2
+        if len(ordered) % 2:
+            return ordered[midpoint]
+        return (ordered[midpoint - 1] + ordered[midpoint]) / 2
+
+
+@dataclass(frozen=True)
+class Quantile(Aggregator):
+    """The ``quantile`` of the completed scores, from 0 to 1.
+
+    The quantile interpolates linearly between the sorted scores, inclusive of
+    both ends (type 7): 0 is the lowest score and 1 the highest.
+    """
+
+    quantile: float
+    name = "quantile"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "quantile", _validate_unit_parameter(self.quantile, "quantile")
+        )
+
+    def reduce(self, completed: tuple[SampleResult, ...]) -> float:
+        ordered = sorted(sample.score for sample in completed)
+        position = (len(ordered) - 1) * self.quantile
+        lower = math.floor(position)
+        upper = math.ceil(position)
+        fraction = position - lower
+        return ordered[lower] + fraction * (ordered[upper] - ordered[lower])
+
+
+# The class of each built-in numeric aggregator, by name. ``prf`` reads the
+# matches of the items instead, on its own path.
+_BUILT_IN_AGGREGATORS: dict[str, type[Aggregator]] = {
+    aggregator.name: aggregator
+    for aggregator in (NumericMean, WeightedMean, Median, Quantile)
+}
+
 
 @dataclass(frozen=True)
 class AggregationSpec:
     """Configuration of one aggregation.
 
-    A built-in aggregator is a ``method`` and its parameters. A custom one is
-    an ``aggregator`` with ``method`` set to its name and no parameters.
+    A built-in aggregator is a ``method`` and its parameters, or an instance
+    of its class, such as ``aggregator=Quantile(0.9)``, which the spec holds
+    as that method and its parameters. A custom one is an ``aggregator`` with
+    ``method`` set to its name and no parameters. Aggregation scores both
+    kinds with the ``reduce`` of their ``Aggregator``.
     """
 
     method: AggregationMethod | str = "numeric_mean"
@@ -227,7 +327,7 @@ class AggregationSpec:
     aggregator: Aggregator | None = None
 
     def __post_init__(self) -> None:
-        if self.aggregator is not None:
+        if self.aggregator is not None and not self._unpack_built_in():
             self._validate_custom()
             return
         if self.method not in _METHODS:
@@ -235,11 +335,7 @@ class AggregationSpec:
 
         normalized_weights = None
         if self.weights is not None:
-            if not isinstance(self.weights, tuple):
-                raise TypeError("weights must be a tuple")
-            normalized_weights = tuple(
-                _validate_weight(weight) for weight in self.weights
-            )
+            normalized_weights = _validate_weights(self.weights)
             object.__setattr__(self, "weights", normalized_weights)
 
         if self.quantile is not None:
@@ -283,6 +379,52 @@ class AggregationSpec:
             or self.thresholds is not None
         ):
             raise ValueError(f"{self.method} does not accept aggregation parameters")
+
+    def _unpack_built_in(self) -> bool:
+        """Hold a built-in aggregator as its method and parameters.
+
+        A spec of ``aggregator=Quantile(0.25)`` becomes the spec of
+        ``method="quantile", quantile=0.25``, so the two compare equal. Returns
+        False, and changes nothing, for any other aggregator.
+        """
+        aggregator = self.aggregator
+        name = getattr(aggregator, "name", None)
+        if not isinstance(name, str):
+            return False
+        built_in = _BUILT_IN_AGGREGATORS.get(name)
+        if built_in is None or type(aggregator) is not built_in:
+            return False
+        if self.method != name:
+            raise ValueError(
+                f"method must be the aggregator name {name!r}, got {self.method!r}"
+            )
+        if (
+            self.weights is not None
+            or self.quantile is not None
+            or self.thresholds is not None
+        ):
+            raise ValueError(
+                f"set the parameters of {name} on the aggregator or on the spec, "
+                "not both"
+            )
+        for parameter in fields(aggregator):
+            object.__setattr__(
+                self, parameter.name, getattr(aggregator, parameter.name)
+            )
+        object.__setattr__(self, "aggregator", None)
+        return True
+
+    def _numeric_aggregator(self) -> Aggregator:
+        """The aggregator that scores the spec: the custom one, or the built-in one."""
+        if self.aggregator is not None:
+            return self.aggregator
+        built_in = _BUILT_IN_AGGREGATORS[self.method]
+        return built_in(
+            **{
+                parameter.name: getattr(self, parameter.name)
+                for parameter in fields(built_in)
+            }
+        )
 
     def _validate_custom(self) -> None:
         """Check a custom aggregator, its name as the method and no parameters."""
@@ -481,7 +623,8 @@ def aggregate(
     The aggregate is COMPLETED when every sample completed, PARTIAL
     when only some did, and FAILED, without a score, when none did.
     An ``Aggregator`` in place of ``spec`` is the ``AggregationSpec`` with
-    that aggregator and its name as the method.
+    that aggregator and its name as the method, so
+    ``aggregate(results, Median())`` is ``median(results)``.
     """
     if isinstance(spec, Aggregator):
         spec = AggregationSpec(method=_aggregator_name(spec), aggregator=spec)
@@ -510,8 +653,10 @@ def _aggregate_numeric(
     coverage = succeeded_count / total_count
 
     status = _status_for(succeeded_count, total_count)
-    candidate_score, denominator = _reduce_successful(completed, spec)
-    score = None if status is EvaluationStatus.FAILED else candidate_score
+    # The same steps for a built-in and a custom aggregator: the counts above,
+    # then its reduce of the completed samples, when there are any.
+    aggregator = spec._numeric_aggregator()
+    score = _aggregator_score(aggregator, completed) if completed else None
 
     return AggregationResult(
         method=spec.method,
@@ -521,49 +666,10 @@ def _aggregate_numeric(
         succeeded_count=succeeded_count,
         failed_count=failed_count,
         skipped_count=skipped_count,
-        denominator=denominator,
+        denominator=aggregator._denominator(completed),
         coverage=coverage,
         spec=spec,
     )
-
-
-def _reduce_successful(
-    completed: Sequence[SampleResult],
-    spec: AggregationSpec,
-) -> tuple[float | None, int | float]:
-    samples = tuple(completed)
-    if not samples:
-        return None, 0.0 if spec.method == "weighted_mean" else 0
-    if spec.aggregator is not None:
-        return _custom_score(spec.aggregator, samples), len(samples)
-
-    scores = tuple(sample.score for sample in samples)
-    if spec.method == "numeric_mean":
-        return sum(scores) / len(scores), len(scores)
-    if spec.method == "weighted_mean":
-        weighted = tuple(
-            (sample.score, spec.weights[sample.ordinal]) for sample in samples
-        )
-        denominator = sum(weight for _, weight in weighted)
-        numerator = sum(score * weight for score, weight in weighted)
-        if not math.isfinite(denominator) or not math.isfinite(numerator):
-            raise ValueError("weighted aggregation must remain finite")
-        return numerator / denominator, denominator
-    if spec.method == "median":
-        ordered = sorted(scores)
-        midpoint = len(ordered) // 2
-        if len(ordered) % 2:
-            return ordered[midpoint], len(ordered)
-        return (ordered[midpoint - 1] + ordered[midpoint]) / 2, len(ordered)
-
-    # quantile: inclusive type-7 linear interpolation
-    ordered = sorted(scores)
-    position = (len(ordered) - 1) * spec.quantile
-    lower = math.floor(position)
-    upper = math.ceil(position)
-    fraction = position - lower
-    value = ordered[lower] + fraction * (ordered[upper] - ordered[lower])
-    return value, len(ordered)
 
 
 def _aggregate_prf(
@@ -672,12 +778,14 @@ def _aggregator_name(aggregator: Aggregator) -> str:
             f"aggregator name {name!r} must have lowercase letters, digits and "
             "underscores, starting with a letter"
         )
-    if name in _METHODS:
+    if name in _METHODS and type(aggregator) is not _BUILT_IN_AGGREGATORS.get(name):
         raise ValueError(f"aggregator name {name!r} is a built-in aggregator")
     return name
 
 
-def _custom_score(aggregator: Aggregator, completed: tuple[SampleResult, ...]) -> float:
+def _aggregator_score(
+    aggregator: Aggregator, completed: tuple[SampleResult, ...]
+) -> float:
     """Return what ``reduce`` gives for the completed samples, checked as a score."""
     score = aggregator.reduce(completed)
     try:
@@ -740,6 +848,13 @@ def _validate_threshold(threshold: object) -> float:
     return normalized
 
 
+def _validate_weights(weights: object) -> tuple[float, ...]:
+    """Accept a tuple of weights and return it with each weight as a float."""
+    if not isinstance(weights, tuple):
+        raise TypeError("weights must be a tuple")
+    return tuple(_validate_weight(weight) for weight in weights)
+
+
 def _validate_weight(weight: object) -> float:
     if isinstance(weight, bool) or not isinstance(weight, Real):
         raise TypeError("weights must be real numbers")
@@ -799,9 +914,13 @@ __all__ = [
     "AggregationSpec",
     "EvaluationStatus",
     "Matches",
+    "Median",
+    "NumericMean",
+    "Quantile",
     "SampleOutput",
     "SampleResult",
     "SampleStatus",
+    "WeightedMean",
     "median",
     "numeric_mean",
     "prf",

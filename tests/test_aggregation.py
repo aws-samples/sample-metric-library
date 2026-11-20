@@ -18,9 +18,13 @@ from metric_library.core.aggregation import (
     Aggregator,
     EvaluationStatus,
     Matches,
+    Median,
+    NumericMean,
+    Quantile,
     SampleOutput,
     SampleResult,
     SampleStatus,
+    WeightedMean,
     aggregate,
     median,
     numeric_mean,
@@ -1334,6 +1338,182 @@ class TestCustomAggregator:
 
         with pytest.raises(error, match=message):
             aggregate((_completed(0, 0.5),), NamedAs())
+
+
+# Completed, failed, completed, completed, skipped: the completed scores are
+# 0.9, 0.1 and 0.5 at ordinals 0, 2 and 3.
+MIXED_RESULTS = (
+    _completed(0, 0.9),
+    _failed(1),
+    _completed(2, 0.1),
+    _completed(3, 0.5),
+    _skipped(4),
+)
+FIVE_WEIGHTS = (1.0, 2.0, 3.0, 4.0, 5.0)
+
+
+class TestBuiltInAggregatorClasses:
+    """The four numeric built-ins are Aggregator subclasses, like a custom one."""
+
+    def test_the_classes_carry_the_built_in_names(self):
+        classes = (NumericMean, WeightedMean, Median, Quantile)
+
+        assert [c.name for c in classes] == [
+            "numeric_mean",
+            "weighted_mean",
+            "median",
+            "quantile",
+        ]
+        assert all(issubclass(c, Aggregator) for c in classes)
+
+    @pytest.mark.parametrize(
+        ("aggregator", "function_result", "spec"),
+        [
+            pytest.param(
+                NumericMean(),
+                numeric_mean(MIXED_RESULTS),
+                AggregationSpec(),
+                id="numeric_mean",
+            ),
+            pytest.param(
+                WeightedMean(FIVE_WEIGHTS),
+                weighted_mean(MIXED_RESULTS, FIVE_WEIGHTS),
+                AggregationSpec(method="weighted_mean", weights=FIVE_WEIGHTS),
+                id="weighted_mean",
+            ),
+            pytest.param(
+                Median(),
+                median(MIXED_RESULTS),
+                AggregationSpec(method="median"),
+                id="median",
+            ),
+            pytest.param(
+                Quantile(0.25),
+                quantile(MIXED_RESULTS, 0.25),
+                AggregationSpec(method="quantile", quantile=0.25),
+                id="quantile",
+            ),
+        ],
+    )
+    def test_a_class_gives_the_result_of_its_function_and_spec(
+        self, aggregator, function_result, spec
+    ):
+        result = aggregate(MIXED_RESULTS, aggregator)
+
+        assert result == function_result
+        assert result == aggregate(MIXED_RESULTS, spec)
+        assert result.method == aggregator.name
+        assert result.status is EvaluationStatus.PARTIAL
+        # The spec holds a built-in as its method and parameters.
+        assert result.spec == spec
+        assert result.spec.aggregator is None
+
+    def test_the_scores_of_the_classes(self):
+        scores = {
+            name: aggregate(MIXED_RESULTS, aggregator).score
+            for name, aggregator in (
+                ("numeric_mean", NumericMean()),
+                ("weighted_mean", WeightedMean(FIVE_WEIGHTS)),
+                ("median", Median()),
+                ("quantile", Quantile(0.25)),
+            )
+        }
+
+        assert scores == pytest.approx(
+            {
+                "numeric_mean": 0.5,
+                # (0.9 * 1 + 0.1 * 3 + 0.5 * 4) / (1 + 3 + 4)
+                "weighted_mean": 3.2 / 8,
+                "median": 0.5,
+                # Sorted 0.1, 0.5, 0.9: position 0.5, halfway from 0.1 to 0.5.
+                "quantile": 0.3,
+            }
+        )
+
+    def test_weighted_mean_reports_the_weight_sum_of_the_completed_samples(self):
+        result = aggregate(MIXED_RESULTS, WeightedMean(FIVE_WEIGHTS))
+
+        assert result.denominator == 8.0
+        assert isinstance(result.denominator, float)
+
+    def test_a_built_in_instance_in_a_spec_becomes_its_method_and_parameters(self):
+        spec = AggregationSpec(method="weighted_mean", aggregator=WeightedMean((1, 2)))
+
+        assert spec == AggregationSpec(method="weighted_mean", weights=(1.0, 2.0))
+        assert spec.aggregator is None
+        assert all(isinstance(weight, float) for weight in spec.weights)
+        assert AggregationSpec(
+            method="quantile", aggregator=Quantile(0.25)
+        ) == AggregationSpec(method="quantile", quantile=0.25)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            pytest.param(
+                {"method": "quantile", "quantile": 0.5, "aggregator": Quantile(0.25)},
+                "set the parameters of quantile on the aggregator or on the spec, "
+                "not both",
+                id="parameters-twice",
+            ),
+            pytest.param(
+                {"method": "median", "aggregator": Quantile(0.5)},
+                "method must be the aggregator name 'quantile', got 'median'",
+                id="method-of-another-aggregator",
+            ),
+        ],
+    )
+    def test_spec_rejects_a_conflicting_built_in_instance(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            AggregationSpec(**kwargs)
+
+    @pytest.mark.parametrize(
+        ("build", "error", "message"),
+        [
+            (lambda: Quantile(1.5), ValueError, "quantile must be between 0.0 and 1.0"),
+            (lambda: Quantile("0.5"), TypeError, "quantile must be a real number"),
+            (lambda: WeightedMean([1.0]), TypeError, "weights must be a tuple"),
+            (
+                lambda: WeightedMean((1.0, 0.0)),
+                ValueError,
+                "weights must be strictly positive",
+            ),
+            (
+                lambda: WeightedMean((math.inf,)),
+                ValueError,
+                "weights must be finite",
+            ),
+        ],
+    )
+    def test_a_class_checks_its_own_parameters(self, build, error, message):
+        with pytest.raises(error, match=message):
+            build()
+
+    def test_weights_must_cover_every_sample(self):
+        with pytest.raises(ValueError, match="weights must align one-for-one"):
+            aggregate(MIXED_RESULTS, WeightedMean((1.0, 2.0)))
+
+    def test_instances_compare_and_hash_by_their_parameters(self):
+        assert Quantile(0.5) == Quantile(0.5)
+        assert Quantile(0.5) != Quantile(0.6)
+        assert len({Quantile(0.5), Quantile(0.5), Median(), Median()}) == 2
+        assert NumericMean() != Median()
+
+    def test_a_subclass_of_a_built_in_needs_its_own_name(self):
+        class SameName(Median):
+            pass
+
+        class LowerMedian(Median):
+            name = "lower_median"
+
+        with pytest.raises(ValueError, match="'median' is a built-in aggregator"):
+            aggregate(MIXED_RESULTS, SameName())
+
+        # With its own name, a subclass is a custom aggregator that reuses the
+        # built-in reduce.
+        result = aggregate(MIXED_RESULTS, LowerMedian())
+        assert result.method == "lower_median"
+        assert result.score == median(MIXED_RESULTS).score
+        assert result.spec.aggregator == LowerMedian()
 
 
 class TestPrfAggregators:
