@@ -10,7 +10,7 @@ A comprehensive Python library for evaluating AI/ML model outputs with multiple 
 The metric library provides a unified interface for computing evaluation metrics with:
 
 - **40+ metrics** including classification, regression, match, and LLM-as-Judge metrics
-- **One evaluation engine**: every metric scores each sample, and an aggregator consolidates the per-sample scores into the final score
+- **One evaluation engine**: every metric scores each sample, and an aggregator consolidates the per-sample scores into the final score; a custom metric can bring its own aggregator
 - **Multi-modal support** for text, numeric, image, audio, and video data
 - **Automatic metric discovery** via registry system
 - **Flexible metric naming** with normalization support
@@ -101,7 +101,7 @@ metric_library/
 │   ├── bedrock_client.py         # AWS Bedrock client for LLM metrics
 │   ├── data_handler.py           # DataHandler & extract_nested_values
 │   ├── evaluation.py             # Engine functions: per-sample scoring with retries, sample failures, aggregation
-│   ├── aggregation.py            # Sample results and aggregators (numeric_mean, weighted_mean, median, quantile, prf)
+│   ├── aggregation.py            # Sample results and aggregators (the Aggregator classes, numeric_mean, weighted_mean, median, quantile, prf)
 │   ├── matching.py               # Matchers: WholeValue (default), LabelSet, ListItems
 │   │
 │   └── data/                     # Data type classes
@@ -576,9 +576,13 @@ keys; with `--omit-reasoning`, `reasoning` is `null`.
   `the labels and list matchers require the prf aggregation method`. The
   engine resolves the aggregator in this order: the caller's
   `aggregation_method`, then the metric's `default_aggregation_method`, then
-  `numeric_mean`. No built-in metric sets a default. The retry settings
-  (`max_attempts`, `initial_delay`, `multiplier`, `max_delay`) live on the
-  same configuration.
+  `numeric_mean`. No built-in metric sets a default. Both can also be an
+  `Aggregator` instance: `Quantile(0.9)` is the same as
+  `aggregation_method="quantile", quantile=0.9`, and a custom aggregator
+  computes a final score that none of the five gives, such as a recall pooled
+  over all samples (see [Custom Aggregators](#custom-aggregators)). The retry
+  settings (`max_attempts`, `initial_delay`, `multiplier`, `max_delay`) live
+  on the same configuration.
 - **Concurrency.** `EvaluationConfiguration(max_workers=...)` sets how many
   samples of a metric are scored at the same time, from 1 to 32; the default
   is 4, as for the runner's `--max-workers`. Only a metric whose class sets
@@ -645,8 +649,19 @@ keys; with `--omit-reasoning`, `reasoning` is `null`.
   matcher gives the same sample scores: a sample with no labels on either side
   scores `1.0` and counts only in `tn`, and the labels of a sample with one
   empty side count as false positives or false negatives. A dataset with no
-  labels anywhere fails under the `prf` aggregator with
-  `no items in any prediction or reference`.
+  labels anywhere fails under the `prf` aggregator: the result keeps its
+  samples, and its aggregate is FAILED with the `error`
+  `no items in any prediction or reference` (see Aggregation failures below).
+- **Aggregation failures.** The aggregation runs once the samples are scored.
+  When it fails, such as a custom aggregator whose `reduce` raises, the
+  result keeps every sample result, and `result.status` is
+  `EvaluationStatus.FAILED` with `result.score` `None`, as when no sample
+  completed. `result.aggregate.error` holds the message and
+  `result.aggregate.error_category` its kind, such as `exception:KeyError`,
+  as for a failed sample, and the counts and the coverage still describe the
+  samples. A WARNING log line names the metric, the error category and the
+  number of sample results kept. Fix the aggregator and rerun it on the kept
+  samples, with no new metric calls: `aggregate(result.samples, Fixed())`.
 
 ### DataHandler
 
@@ -905,8 +920,10 @@ Every metric has one shape. Subclass `Metric`, implement
 class with `@MetricRegistry.register`. The engine calls `compute` once
 per sample and aggregates the returned scores. Return `SampleOutput(score,
 details)` to keep per-sample details with the score: with the default `whole`
-matcher, the sample result keeps them in `details`, and no aggregator reads
-them. A deterministic metric ignores `client`. The `sample` carries
+matcher, the sample result keeps them in `details`, which no built-in
+aggregator reads and a custom one can (see
+[Custom Aggregators](#custom-aggregators)). A deterministic metric ignores
+`client`. The `sample` carries
 `sample.prediction`, `sample.reference`, `sample.prompt` and
 `sample.contexts`:
 
@@ -928,7 +945,8 @@ class WholeValueMatch(Metric):
     supported_data_types = [Modality.TEXT]
 
     # Optional: the aggregator the engine uses when the caller sets none
-    # (the default is numeric_mean).
+    # (the default is numeric_mean): a built-in name, or an Aggregator
+    # instance such as Quantile(0.9) (see Custom Aggregators).
     # default_aggregation_method = "median"
 
     def compute(self, sample: EvaluationSample, client: BedrockClient) -> float:
@@ -1014,9 +1032,12 @@ Rules for authors:
   so a metric with the default `SINGLE` also runs over arrays there. A metric
   that declares `ALIGNED` or `ANY_ACCEPTABLE` accepts only the `whole`
   matcher: the matchers pair items by score and count every unpaired item.
-- A dataset statistic that combines the aggregates of other metrics has no
-  built-in shape. Compose the results of two `compute_metric` calls in
-  application code.
+- A final score that is not one of the built-in aggregates of the
+  per-sample scores, such as a ratio pooled over all samples, is a custom
+  aggregator (see [Custom Aggregators](#custom-aggregators)). A dataset
+  statistic that combines the aggregates of other metrics has no built-in
+  shape. Compose the results of two `compute_metric` calls in application
+  code.
 
 ### LLM-Based Metric
 
@@ -1123,6 +1144,105 @@ bytes) fails the metric before the first judge call. The requests reuse that
 block, so a BMP or TIFF image is converted to PNG once per run, also when
 several LLM metrics read it.
 
+### Custom Aggregators
+
+An aggregator turns the completed samples of a metric into its final score.
+The built-in `numeric_mean`, `weighted_mean`, `median` and `quantile` are the
+classes `NumericMean()`, `WeightedMean(weights)`, `Median()` and
+`Quantile(quantile)`, all subclasses of `Aggregator`; `prf` reads the
+matches of the items and stays a name. A custom aggregator subclasses
+`Aggregator` in the custom metrics file, next to the metric that uses it,
+sets `name` and implements `reduce(completed) -> float`. A metric selects an
+aggregator by setting an instance as its `default_aggregation_method`.
+
+The mean of per-sample ratios weighs every sample the same. This metric
+scores the share of the reference words that a prediction contains, and its
+aggregator pools the counts, so a sample with more reference words counts
+more:
+
+```python
+from dataclasses import dataclass
+
+from metric_library import Aggregator, SampleOutput
+from metric_library.core.base import Metric
+from metric_library.core.registry import MetricRegistry
+
+
+@dataclass(frozen=True)
+class PooledRecall(Aggregator):
+    """The reference words found over all reference words, pooled over the samples."""
+
+    name = "pooled_recall"
+
+    def reduce(self, completed):
+        found = sum(sample.details["found"] for sample in completed)
+        words = sum(sample.details["words"] for sample in completed)
+        return found / words if words else 1.0
+
+
+@MetricRegistry.register
+class WordRecall(Metric):
+    """The share of the reference words that the prediction contains."""
+
+    default_aggregation_method = PooledRecall()
+
+    def compute(self, sample, client):
+        reference = str(sample.reference.get_raw_data()).split()
+        prediction = set(str(sample.prediction.get_raw_data()).split())
+        found = sum(word in prediction for word in reference)
+        return SampleOutput(
+            score=found / len(reference) if reference else 1.0,
+            details={"found": found, "words": len(reference)},
+        )
+```
+
+With the predictions `the cat sat` and `a dog` against the references `the
+cat sat on the mat` and `a dog`, the samples score `0.667` (4 of 6 words) and
+`1.0` (2 of 2). `WordRecall` reports `0.75`, 6 of 8 words, where
+`--aggregation-methods numeric_mean` gives `0.833`. The envelope records
+`"aggregation_method": "pooled_recall"` in `meta.metrics`.
+
+Rules for aggregator authors:
+
+- `reduce` gets the completed samples, a tuple of `SampleResult` in input
+  order, and returns a finite real. The engine counts the statuses itself and
+  calls `reduce` only when at least one sample completed, so the result is
+  PARTIAL or FAILED as with the built-in aggregators. Each sample has
+  `score`, and `details` when `compute` returned a `SampleOutput`; `details`
+  is `None` for a sample whose `compute` returned a bare float.
+- `name` has lowercase letters, digits and underscores and starts with a
+  letter. The result reports it as its `method`, `--list-metrics` lists it as
+  the metric's default aggregator, and `meta.metrics` records it. Only the
+  built-in classes use the built-in names, so a subclass of `Median` needs a
+  name of its own.
+- Set an instance, `PooledRecall()`, not the class; the class stops the
+  metric before its first sample with
+  `not the class PooledRecall; use PooledRecall()`. An instance holds its own
+  parameters and takes no `weights`, `quantile` or `thresholds` from the
+  configuration.
+- One instance serves every evaluation of the metric, so `reduce` keeps no
+  state between calls, and reads the samples it gets rather than values that
+  `compute` kept on the metric: a retried or skipped sample would count
+  wrongly there. A frozen dataclass fits: its fields are the parameters, two
+  instances with the same parameters compare equal, and `meta.metrics`
+  records the fields under `aggregator_parameters`.
+- The caller can still choose another aggregator: a name in
+  `--aggregation-methods` or in `EvaluationConfiguration(aggregation_method=...)`
+  overrides the metric's default, and in the library an instance does too,
+  for any metric: `EvaluationConfiguration(aggregation_method=PooledRecall())`.
+  The CLI selects only the built-in names. To give another metric a custom
+  aggregator on the CLI, subclass that metric in the custom metrics file and
+  set the instance as the subclass's default.
+- A custom aggregator works with the `whole` matcher; `labels` and `list`
+  need `prf`.
+- When `reduce` raises, or returns something other than a finite real, the
+  metric fails and keeps its sample results (see Aggregation failures under
+  [Evaluating a metric](#evaluating-a-metric)), so a fixed aggregator can
+  rerun on them with no new metric calls:
+  `aggregate(result.samples, PooledRecall())`, with `aggregate` from
+  `metric_library.core.aggregation`. `aggregate(results, Median())` is
+  `median(results)`.
+
 ## Validating Custom Metrics
 
 Use `validate_metrics.py` to check `custom_metrics.py` for syntax errors and unresolvable imports before running it:
@@ -1224,7 +1344,7 @@ With `--aggregation-methods weighted_mean --weight-key weight` on the records
 
 | Argument | Required | Purpose |
 | --- | --- | --- |
-| `--list-metrics` | no | Print one entry per registered metric (built-in, and custom from the `--custom-metrics-path` file) and exit: `name`, `kind`, `modalities`, `reference`, `prompt`, `context`, `default_aggregation_method`, `description`. `--metrics` filters the list. No data argument is needed and no AWS access is made. |
+| `--list-metrics` | no | Print one entry per registered metric (built-in, and custom from the `--custom-metrics-path` file) and exit: `name`, `kind`, `modalities`, `reference`, `prompt`, `context`, `default_aggregation_method` (the `name` of an `Aggregator` instance default), `description`. `--metrics` filters the list. No data argument is needed and no AWS access is made. |
 | `--format` | no | `json` (default) or `table`, for `--list-metrics` only. |
 | `--execution-output-path` | yes | JSON array of prediction records. |
 | `--metrics` | yes | Comma-separated metric names, each metric at most once. Names compare after normalization, so `Accuracy` and `accuracy` are one metric. |
@@ -1240,7 +1360,7 @@ With `--aggregation-methods weighted_mean --weight-key weight` on the records
 | `--prompt-path` | no | Separate prompt source (see below). |
 | `--data-root` | no | Folder that every file named inside the data files must lie in: media paths in record values, prompt manifest entries and the entries of a keyless `--ground-truth-path` array. A path outside it, also through a symbolic link, stops the run before any metric with `record <i>: '<path>' is outside --data-root <folder>`. The path options themselves are not checked. Omitted: no folder confines the paths, and the first path outside the folder of the data file that names it logs a warning for that folder. |
 | `--custom-metrics-path` | no | Python file of custom metrics, loaded as the module `custom_metrics`. It is the only way the runner loads custom metrics: a `custom_metrics.py` in the working directory or on `PYTHONPATH` is not imported. Its code runs with your privileges. A file that fails to load stops the run with `cannot load the custom metrics module '<path>': <message>`. The file can define any number of metrics. Given more than once, only the last file is loaded; for metrics in several files, pass the `__init__.py` of a package (see [Creating Custom Metrics](#creating-custom-metrics)). Omitted: only the built-in metrics are registered. |
-| `--aggregation-methods` | no | Comma-separated aggregators aligned with `--metrics`: `numeric_mean`, `weighted_mean`, `median`, `quantile`, `prf`, or empty for that metric's default. One entry applies to every metric. A `prf` entry requires `labels` or `list` in `--matcher`. |
+| `--aggregation-methods` | no | Comma-separated aggregators aligned with `--metrics`: `numeric_mean`, `weighted_mean`, `median`, `quantile`, `prf`, or empty for that metric's default, which can be a custom aggregator (see [Custom Aggregators](#custom-aggregators)). One entry applies to every metric. A `prf` entry requires `labels` or `list` in `--matcher`. |
 | `--weight-key` | no | Key of the per-record weight in the execution output for every `weighted_mean` entry of `--aggregation-methods`: a finite positive number in each record, one per prediction. Required with a `weighted_mean` entry, rejected without one. |
 | `--quantile` | no | Quantile in [0, 1] for every `quantile` entry of `--aggregation-methods`. Required with a `quantile` entry, rejected without one. |
 | `--matcher` | no | Comma-separated matchers aligned with `--metrics`: `whole` (the full value is one item; the default), `labels` (one item for each label) or `list` (one item for each element of a list), or empty for `whole`. One entry applies to every metric. `labels` and `list` require the `prf` aggregator, and `prf` requires `labels` or `list`. |
@@ -1413,7 +1533,11 @@ result has this shape:
   `aggregation_method` (the metric's default for an empty entry), its
   `matcher`, the options that the aggregator and the matcher took
   (`quantile`, `weight_key`, `thresholds`, where `null` is the default 0.5,
-  `class_key`, `value_key`) and, for an LLM metric, `prompt_sha256`: a
+  `class_key`, `value_key`; for a default that is an `Aggregator` instance,
+  its own parameters instead: `quantile` for `Quantile(0.9)`, `weights` for
+  `WeightedMean`, and the fields of a custom dataclass aggregator under
+  `aggregator_parameters`, a value that strict JSON cannot hold, such as NaN,
+  as its repr) and, for an LLM metric, `prompt_sha256`: a
   SHA-256 of the fixed text of its judge requests, which changes when the
   judge role, the rubric, the response schema, the `modality_guidance`, the
   sentences that introduce a candidate or a ground truth in several parts,
@@ -1498,11 +1622,15 @@ several samples at a time, advice comes before the failed sample, such as
 samples scored at a time (see Concurrency under [LLM Metrics](#llm-metrics)).
 With `stop`, a metric fails only when its first sample failed, and reports
 `sample 1: <message>`.
+In both modes, a metric also fails when the aggregation of its scored
+samples fails, and reports `aggregation failed with <category>: <message>`,
+such as `aggregation failed with exception:ValueError: no items in any
+prediction or reference` or the error of a custom aggregator.
 `data.status[name]`, for every metric of `--metrics`, in that order, is
 `completed` when every sample completed, `partial` when the metric has a score
 from only some of its samples, and `failed` when it has no score: none of its
-samples completed, or it failed before scoring. These are the values of
-`EvaluationStatus`.
+samples completed, its aggregation failed, or it failed before scoring. These
+are the values of `EvaluationStatus`.
 `data.coverage[name]`, for each metric with `data.samples`, counts its
 `succeeded`, `failed` and `skipped` samples, and `coverage` is the share that
 succeeded.
@@ -1523,10 +1651,10 @@ reference item, and to the item counts `n_pred` and `n_ref`; `score` is then
 the F1 of the record at the first threshold. Identifiers must be unique
 and non-empty; a duplicate, blank or missing identifier stops the run before
 any metric executes. A metric that fails before scoring (unknown name, input
-validation, an item matcher on an LLM metric that is not an `LLMBatchMetric`),
-or whose aggregator rejects the scored samples (`no items in any prediction or
-reference`), has no entry in `data.samples`. A metric whose sample fails
-keeps its list, so the failed sample and the skipped ones are visible.
+validation, an item matcher on an LLM metric that is not an `LLMBatchMetric`)
+has no entry in `data.samples`. A metric whose sample fails keeps its list, so
+the failed sample and the skipped ones are visible, and so does a metric
+whose aggregation fails after scoring, with its `data.coverage` entry.
 
 | Status | `ok` | Exit code | Meaning |
 | --- | --- | --- | --- |
@@ -1640,8 +1768,8 @@ python -m metric_library.run_metrics --list-metrics --format table
 - `register(metric_class)` - Register a `Metric` subclass; raises `TypeError` for any other value
 - `get_metric(name)` - Get metric instance by name
 - `is_registered(name)` - Check if metric exists
-- `list_metrics(names=None) -> list[dict]` - One entry per registered metric (`name`, `kind`, `modalities`, `reference`, `prompt`, `context`, `default_aggregation_method`, `description`), from class attributes and without instantiating a metric; `names` filters and orders, an unknown name raises `KeyError`. The runner's `--list-metrics` prints this list.
-- `compute_metric(name, predictions, references, context=None, prompts=None, *, configuration=None, client_factory=None, sleeper=None) -> MetricEvaluationResult` - Evaluate one metric through the engine; the result is COMPLETED, PARTIAL or FAILED
+- `list_metrics(names=None) -> list[dict]` - One entry per registered metric (`name`, `kind`, `modalities`, `reference`, `prompt`, `context`, `default_aggregation_method`, which is the `name` of an `Aggregator` instance default, `description`), from class attributes and without instantiating a metric; `names` filters and orders, an unknown name raises `KeyError`. The runner's `--list-metrics` prints this list.
+- `compute_metric(name, predictions, references, context=None, prompts=None, *, configuration=None, client_factory=None, sleeper=None) -> MetricEvaluationResult` - Evaluate one metric through the engine; the result is COMPLETED, PARTIAL or FAILED, also when the aggregation of the scored samples fails
 - `batch_compute(metrics, predictions, references, context=None, prompts=None, *, configuration=None, client_factory=None, sleeper=None) -> dict[str, MetricEvaluationResult | MetricError]` - Evaluate several metrics on the same inputs; a `MetricError` records an exception that `compute_metric` raised for that name
 - `shared_bedrock_profile` - Class attribute, `str | None`, default `None`. The AWS profile of the shared embedding client of the semantic match metrics; `None` means the boto3 default chain. The runner sets it from `--aws-profile`. Set it before the first semantic match metric is created, because the client is cached on the class.
 
@@ -1664,7 +1792,7 @@ adds `compute_matrix`.
 
 - `compute(sample, client) -> float | SampleOutput` - Abstract; every metric implements it. Returns one finite real for one `EvaluationSample`, or a `SampleOutput` that carries the score and a `details` mapping that the sample result keeps. With an item matcher, the sample holds one predicted item and one reference item, and the score must be from 0.0 to 1.0. Deterministic metrics ignore `client`
 - `compute_matrix(sample, predicted, references, client) -> list[list[float]]` - `LLMBatchMetric` only. Scores each pair of the predicted items and the reference items of one class in one judge call, with the rubric of the metric and the prompt and contexts of `sample`: one row per predicted item, one score per reference item. With the `labels` or `list` matcher, the engine calls it for a class with two or more items on one side, in blocks of at most 10 by 10 items, and checks the shape and the range of the scores
-- `default_aggregation_method` - Class attribute of type `AggregationMethod | None`, default `None`. The engine uses it as the aggregator when the caller sets none; `None` means `numeric_mean`. A default of `prf` also needs an item matcher from the caller
+- `default_aggregation_method` - Class attribute of type `AggregationMethod | Aggregator | None`, default `None`. The engine uses it as the aggregator when the caller sets none; `None` means `numeric_mean`. An `Aggregator` instance, such as `Quantile(0.9)` or a custom one, holds its own parameters (see [Custom Aggregators](#custom-aggregators)). A default of `prf` also needs an item matcher from the caller
 - `thread_safe` - Class attribute of type `bool`, default `False`. `True` lets the engine score up to `max_workers` samples of the metric at the same time; `False` scores one sample at a time. `LLMMetric` and the two semantic match metrics set `True`; an `LLMMetric` subclass that defines `compute` or `compute_matrix` without setting `thread_safe` in the same class gets `False`, with a `UserWarning`
 - `validate_evaluation_inputs(predictions, references, context, prompts)` - Check input presence and alignment against the metric's `reference_policy`, `prompt_policy`, `context_policy` (defaults REQUIRED / OMIT / OMIT); the engine calls it once, before it builds the client
 - `get_info()` - Get metric information
@@ -1677,8 +1805,13 @@ aggregator takes a sequence of `SampleResult` and returns an
 PARTIAL when some samples completed and others failed or were
 skipped; in both cases its score comes from the completed samples only. It is
 FAILED, without a score, when none completed. The engine aggregates this way
-with either `on_sample_error`.
+with either `on_sample_error`. These functions raise when the aggregation
+fails; the engine keeps the samples instead (see Aggregation failures under
+[Evaluating a metric](#evaluating-a-metric)).
 
+- `Aggregator` - Base class of the numeric aggregators, built-in and custom: a `name` class attribute and an abstract `reduce(completed) -> float`, which gets the completed samples in input order (see [Custom Aggregators](#custom-aggregators))
+- `NumericMean()`, `WeightedMean(weights)`, `Median()`, `Quantile(quantile)` - The built-in numeric aggregators as `Aggregator` instances, frozen dataclasses that check their parameters as the functions below do. `EvaluationConfiguration(aggregation_method=Quantile(0.9))` and a metric's `default_aggregation_method = Quantile(0.9)` are the same as the name `quantile` with `quantile=0.9`
+- `aggregate(results, spec)` - From `metric_library.core.aggregation`. Aggregates with an `AggregationSpec` or an `Aggregator` instance: `aggregate(results, Median())` is `median(results)`, and `aggregate(result.samples, PooledRecall())` reruns a custom aggregator on a finished evaluation, with no metric calls
 - `numeric_mean(results)` - Arithmetic mean of the completed scores (the default)
 - `weighted_mean(results, weights)` - Weighted mean; `weights` are strictly positive and align one-for-one with the samples
 - `median(results)` - Median of the completed scores
@@ -1690,7 +1823,7 @@ with either `on_sample_error`.
 Caller overrides for one `compute_metric` or `batch_compute` call. Frozen
 dataclass, exported from `metric_library`.
 
-- `aggregation_method` - `numeric_mean`, `weighted_mean`, `median`, `quantile`, `prf`, or `None` (the default) for the metric's default aggregator; `weights` and `quantile` are the parameters of `weighted_mean` and `quantile`
+- `aggregation_method` - `numeric_mean`, `weighted_mean`, `median`, `quantile`, `prf`, an `Aggregator` instance (built-in, such as `Quantile(0.9)`, or custom), or `None` (the default) for the metric's default aggregator; `weights` and `quantile` are the parameters of `weighted_mean` and `quantile`, and an instance takes neither, as it holds its own
 - `thresholds` - Tuple of pair-score thresholds for `prf`, each greater than `0.0` and at most `1.0`, unique; `None` (the default) means `(0.5,)`. The first threshold gives the score
 - `matcher` - The `Matcher` that gives the items of each value; default `WholeValue()`. `LabelSet()` and `ListItems(...)` require the `prf` aggregator, and `prf` requires one of them
 - `max_attempts`, `initial_delay`, `multiplier`, `max_delay` - The retry settings (defaults `3`, `1.0`, `2.0`, `30.0`)
@@ -1714,8 +1847,8 @@ raised no exception. Exported from `metric_library`.
 
 - `metric_name` - The metric's `name`
 - `samples` - Tuple of `SampleResult`, one per input pair, in input order
-- `aggregate` - The `AggregationResult` of the resolved aggregator. `aggregate.values` holds the precision-recall-F1 object (`threshold`, `precision`, `recall`, `f1`, `per_class`, and `by_threshold` with two or more thresholds) for a completed or partial `prf` aggregation, else `None`
-- `status` - Property, read from the aggregate: `EvaluationStatus.COMPLETED` (`"completed"`) when every sample completed, `EvaluationStatus.PARTIAL` (`"partial"`) when some samples completed and others failed or were skipped, or `EvaluationStatus.FAILED` (`"failed"`) when none completed
+- `aggregate` - The `AggregationResult` of the resolved aggregator. `aggregate.method` is the name of that aggregator, built-in or custom. `aggregate.values` holds the precision-recall-F1 object (`threshold`, `precision`, `recall`, `f1`, `per_class`, and `by_threshold` with two or more thresholds) for a completed or partial `prf` aggregation, else `None`. `aggregate.error` and `aggregate.error_category` say why the aggregation of the scored samples failed, as `error` and `error_category` of a `SampleResult` do, else `None`
+- `status` - Property, read from the aggregate: `EvaluationStatus.COMPLETED` (`"completed"`) when every sample completed, `EvaluationStatus.PARTIAL` (`"partial"`) when some samples completed and others failed or were skipped, or `EvaluationStatus.FAILED` (`"failed"`) when none completed or the aggregation failed
 - `score` - Property; the aggregate score as a float (the F1 at the first threshold for a `prf` aggregate), or `None` when the status is FAILED
 
 ### SampleResult
@@ -1748,7 +1881,7 @@ Frozen dataclass, exported from `metric_library` and
 `metric_library.core.aggregation`.
 
 - `score` - A finite real, stored as a float; the per-sample score
-- `details` - A mapping with string keys, stored as a dict. With the `WholeValue` matcher, the sample result keeps it as `SampleResult.details`; no built-in aggregator reads it
+- `details` - A mapping with string keys, stored as a dict. With the `WholeValue` matcher, the sample result keeps it as `SampleResult.details`; no built-in aggregator reads it, and a custom one can (see [Custom Aggregators](#custom-aggregators))
 
 ### DataType (Base Class)
 
@@ -1807,6 +1940,8 @@ Version 0.2.0 replaces the two computation paths of 0.1.0 with one engine. These
 45. **Judge client timeouts and retries.** The Bedrock client waits up to 600 seconds for a reply, and boto3 sends each request at most 3 times, in its adaptive retry mode, which spaces out the client's requests once Bedrock throttles one, whatever `AWS_MAX_ATTEMPTS`, `AWS_RETRY_MODE` or the AWS config file say; the engine's attempts come on top (see Retries under [LLM Metrics](#llm-metrics)). To retry more, raise `max_attempts` of `EvaluationConfiguration`, at most 10; the runner has no option for it. Before, boto3's defaults applied: a read timeout of 60 seconds and up to 5 requests in its legacy retry mode, which those settings could change.
 46. **Concurrent scoring.** The engine scores up to 4 samples of a metric at the same time (`max_workers` of `EvaluationConfiguration`, `--max-workers` on the runner, from 1 to 32) when the metric's class sets `thread_safe = True`, as every LLM metric and the two semantic match metrics do; the other built-in metrics are scored one sample at a time, as before. The order of the results does not change, but with `on_sample_error="stop"` (item 47), samples after a failed one may already have made judge calls whose results are SKIPPED, and the log lines of different samples interleave. A custom `Metric` subclass keeps scoring one sample at a time until it sets `thread_safe = True`; a custom `LLMMetric` subclass that keeps state in an override sets `thread_safe = False`. A test whose mocked client answers in call order needs `max_workers=1`. The Bedrock client keeps up to 32 connections open, where botocore keeps 10. Before, the engine scored one sample at a time.
 47. **Failed samples.** A sample that still fails after its retries no longer stops its metric (`on_sample_error="continue"` of `EvaluationConfiguration`, the default; `--on-sample-error` on the runner). The other samples are still scored, and the metric gets the score of its completed samples, however few; it fails only when none completed. `EvaluationStatus` gains `PARTIAL` (`"partial"`) for a metric with a score from only some of its samples; `COMPLETED` still means that every sample completed, as in 0.1.0. The metric stops early, and the samples it has not scored are SKIPPED, only on an error that every later sample would hit too, such as expired credentials or a denied model (see Sample failures under [Evaluating a metric](#evaluating-a-metric)). A run in which a metric leaves out failed samples exits with `2`, and `errors` gains an entry for that metric, such as `LLMCorrectness: 12 of 1000 samples failed (coverage 0.988)`. A failed metric reports `no sample completed: <counts>; sample <id>: <message>` instead of `sample <id>: <message>`. When Bedrock throttled failed samples of a metric scored several samples at a time, both messages add advice to lower `--max-workers` (see Concurrency under [LLM Metrics](#llm-metrics)). The envelope gains `data.status`, the `completed`, `partial` or `failed` status of each metric, and `data.coverage`, with the `succeeded`, `failed` and `skipped` counts and the `coverage` of each metric, and `SampleResult` and each `data.samples` entry gain `error_category`. Each failed sample logs its id, metric and error category at WARNING, and a metric with failed samples then logs one line with its completed samples, its failed ones by error category and its skipped ones, such as `LLMCorrectness: 6 of 20 samples completed, 2 failed (bedrock:ValidationException 1, bedrock:AccessDeniedException 1), 12 skipped; the score comes from the completed samples`, or `...; the metric failed` when none completed. The aggregators `numeric_mean`, `weighted_mean`, `median`, `quantile` and `prf` score the completed samples, are PARTIAL when some samples did not complete, and fail only when none completed, where a failed sample failed them before. `MetricEvaluationResult` and the aggregators no longer check the fail-fast order of the samples; `validate_fail_fast_sequence` is still exported. `on_sample_error="stop"`, and `--on-sample-error stop`, stop the metric at its first failed sample, as 0.1.0 did, but keep the score of the samples before it, with the status PARTIAL; the metric fails only when its first sample fails. Before, the first failed sample stopped its metric and failed it, so one sample could fail a run of thousands.
+48. **Custom aggregators.** A metric's `default_aggregation_method` and `EvaluationConfiguration(aggregation_method=...)` take an `Aggregator` instance as well as a built-in name: a built-in one, `NumericMean()`, `WeightedMean(weights)`, `Median()` or `Quantile(quantile)`, or a custom subclass of `Aggregator` with a `name` and a `reduce` of the completed samples, defined in the custom metrics file (see [Custom Aggregators](#custom-aggregators)). The four numeric built-in aggregators are these classes, and their scores do not change. The engine resolves the aggregator in the same order as before, and fails before the first sample for a class in place of an instance, an instance with `weights`, `quantile` or `thresholds`, a wrong name, or a custom aggregator with the `labels` or `list` matcher. `AggregationResult.method` and `meta.metrics` give the name of a custom aggregator, `--list-metrics` lists it as the metric's default, and `meta.metrics` records the parameters of an instance default. The CLI still selects only the built-in names. `metric_library` exports `Aggregator`, `NumericMean`, `WeightedMean`, `Median` and `Quantile`, so a reader that checks its exact export list must accept them. Before, the default and the configuration took only one of the five names.
+49. **Failed aggregation.** When the aggregation of the scored samples fails, such as a custom `reduce` that raises or `prf` over a dataset with no items, `compute_metric` and `batch_compute` return the `MetricEvaluationResult` with its samples and a FAILED aggregate whose new `error` and `error_category` say why, and a WARNING log line names the error category (see Aggregation failures under [Evaluating a metric](#evaluating-a-metric)). Before, `compute_metric` raised the error, `batch_compute` gave a `MetricError`, and the sample results were lost after their metric calls were made. The runner reports `{"error": "aggregation failed with <category>: <message>"}` for the metric and keeps its `data.samples` and `data.coverage` entries, where before it had neither and reported the bare message. The aggregator functions, such as `prf(results)`, still raise.
 
 ## Security
 

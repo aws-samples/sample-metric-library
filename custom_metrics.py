@@ -28,6 +28,16 @@ score. The subclass declares which inputs it reads (``reference_policy``,
 ``prompt_policy``, ``context_policy``) and may add ``modality_guidance``
 for judging images. See "LLM-Based Metric" in the README.
 
+A custom aggregator gives a metric a final score that none of the built-in
+aggregators gives, such as a ratio pooled over all samples. It subclasses
+``Aggregator`` (``from metric_library import Aggregator``) in this file,
+sets ``name`` and implements ``reduce(self, completed) -> float``, which
+gets the completed samples, a tuple of ``SampleResult`` in input order, and
+returns a finite real. A metric selects it with an instance, as in
+``default_aggregation_method = PooledRecall()``, and the built-in ones the
+same way, as in ``default_aggregation_method = Quantile(0.9)``. See "Custom
+Aggregators" in the README for an example and the rules for authors.
+
 Rules for authors:
 
 - ``compute`` returns a finite real or a ``SampleOutput``. Any other
@@ -64,7 +74,8 @@ Rules for authors:
   a role the metric reads fails validation before any sample is scored;
   ``default_aggregation_method``
   names the aggregator the engine uses when the caller sets none (the
-  default is ``numeric_mean``).
+  default is ``numeric_mean``): a built-in name, or an ``Aggregator``
+  instance, built-in or custom.
 - A record field that is a non-empty JSON array of scalars gives the
   sample several items in that role. With the ``whole`` matcher, a metric
   accepts exactly one item per role unless it declares
@@ -107,7 +118,8 @@ Example::
         supported_data_types = [Modality.TEXT]
 
         # Optional: the aggregator the engine uses when the caller sets none
-        # (the default is numeric_mean).
+        # (the default is numeric_mean): a built-in name, or an Aggregator
+        # instance such as Quantile(0.9).
         # default_aggregation_method = "median"
 
         def compute(self, sample: EvaluationSample, client: BedrockClient) -> float:
