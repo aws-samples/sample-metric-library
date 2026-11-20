@@ -26,9 +26,10 @@ import json
 import math
 import os
 import stat
+from numbers import Integral, Real
 import sys
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, fields, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,7 +37,11 @@ from metric_library.core.aggregation import (
     AggregationResult,
     Aggregator,
     EvaluationStatus,
+    Median,
+    NumericMean,
+    Quantile,
     SampleStatus,
+    WeightedMean,
 )
 from metric_library.core.bedrock_client import BedrockClient
 from metric_library.core.data_handler import DataHandler
@@ -514,6 +519,47 @@ def _prompt_sha256(name: str) -> str | None:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _json_safe(value: object) -> object:
+    """``value`` as strict JSON: other values, NaN and infinities by their repr.
+
+    The envelope is written with ``allow_nan=False``, so a parameter that JSON
+    cannot hold must not reach it.
+    """
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, Integral):
+        return int(value)
+    if isinstance(value, Real):
+        number = float(value)
+        return number if math.isfinite(number) else repr(number)
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    return repr(value)
+
+
+def _aggregator_parameters(aggregator: Aggregator) -> dict:
+    """The ``meta.metrics`` entries of the parameters of an ``Aggregator``.
+
+    A built-in one gives its fields under their own names: ``Quantile(0.9)``
+    gives ``"quantile": 0.9``, the entry of a ``--quantile 0.9`` run, and
+    ``WeightedMean`` gives its ``weights``. A custom one that is a dataclass
+    gives its fields under ``aggregator_parameters``, so that none can
+    replace another entry; one without fields, or that is not a dataclass,
+    gives no entry.
+    """
+    if not is_dataclass(aggregator):
+        return {}
+    parameters = {
+        parameter.name: _json_safe(getattr(aggregator, parameter.name))
+        for parameter in fields(aggregator)
+    }
+    if type(aggregator) in (NumericMean, WeightedMean, Median, Quantile):
+        return parameters
+    return {"aggregator_parameters": parameters} if parameters else {}
+
+
 def _metric_meta(
     name: str,
     method: str | None,
@@ -526,8 +572,8 @@ def _metric_meta(
     ``aggregation_method`` is the metric's default when its entry is empty
     (``None`` for an unknown metric), followed by the options of that
     aggregator and of the matcher, and ``prompt_sha256`` for an LLM metric.
-    A default that is an ``Aggregator`` instance is recorded by its name; it
-    holds its own parameters, so the aggregator options do not apply to it.
+    A default that is an ``Aggregator`` instance is recorded by its name and
+    its own parameters (``_aggregator_parameters``), not by the CLI options.
     """
     default = None
     if method is None:
@@ -541,7 +587,9 @@ def _metric_meta(
             method = None
     entry = {"aggregation_method": method, "matcher": matcher}
     if isinstance(default, Aggregator):
-        # Such as Quantile(0.9): the --quantile option is not its parameter.
+        entry.update(_aggregator_parameters(default))
+    elif isinstance(default, type) and issubclass(default, Aggregator):
+        # A class in place of an instance has no parameters; the run reports it.
         pass
     elif method == "quantile":
         entry["quantile"] = args.quantile

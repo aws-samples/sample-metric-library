@@ -4267,8 +4267,7 @@ class TestAggregatorInstanceDefaults:
     PLUGIN = """\
         from dataclasses import dataclass
 
-        from metric_library import Aggregator
-        from metric_library.core.aggregation import Quantile
+        from metric_library import Aggregator, Quantile, WeightedMean
         from metric_library.core.base import Metric
         from metric_library.core.registry import MetricRegistry
 
@@ -4301,6 +4300,20 @@ class TestAggregatorInstanceDefaults:
             \"\"\"The highest exact-match score, by Quantile(1.0).\"\"\"
 
             default_aggregation_method = Quantile(1.0)
+
+
+        @MetricRegistry.register
+        class ExactWeighted(Exact):
+            \"\"\"The exact-match rate with the third record weighted twice.\"\"\"
+
+            default_aggregation_method = WeightedMean((1, 1, 2))
+
+
+        @MetricRegistry.register
+        class ExactNoThreshold(Exact):
+            \"\"\"A parameter that strict JSON cannot hold.\"\"\"
+
+            default_aggregation_method = ShareAtLeast(float("nan"))
     """
 
     def _plugin(self, tmp_path):
@@ -4325,11 +4338,70 @@ class TestAggregatorInstanceDefaults:
             "ExactShare": pytest.approx(2 / 3),
             "ExactTop": 1.0,
         }
-        # An instance holds its parameters, so no --quantile entry is recorded.
+        # An instance gives its own parameters, not the CLI options: a built-in
+        # one under the CLI's entry names, a custom one under
+        # aggregator_parameters.
         assert output["meta"]["metrics"] == {
-            "ExactShare": {"aggregation_method": "share_at_least", "matcher": "whole"},
-            "ExactTop": {"aggregation_method": "quantile", "matcher": "whole"},
+            "ExactShare": {
+                "aggregation_method": "share_at_least",
+                "matcher": "whole",
+                "aggregator_parameters": {"threshold": 1.0},
+            },
+            "ExactTop": {
+                "aggregation_method": "quantile",
+                "matcher": "whole",
+                "quantile": 1.0,
+            },
         }
+
+    def test_meta_records_the_weights_of_a_weighted_mean_default(
+        self, sample_data, tmp_path
+    ):
+        output_path = tmp_path / "result.json"
+
+        result = _run_evaluation(
+            sample_data,
+            output_path,
+            "ExactWeighted",
+            "--custom-metrics-path",
+            self._plugin(tmp_path),
+        )
+
+        assert result.returncode == 0, result.stderr
+        output = _full_output(result, output_path)
+        # (1.0 * 1 + 1.0 * 1 + 0.0 * 2) / 4
+        assert output["data"]["results"] == {"ExactWeighted": 0.5}
+        assert output["meta"]["metrics"]["ExactWeighted"] == {
+            "aggregation_method": "weighted_mean",
+            "matcher": "whole",
+            "weights": [1.0, 1.0, 2.0],
+        }
+
+    def test_a_parameter_that_json_cannot_hold_is_recorded_by_its_repr(
+        self, sample_data, tmp_path
+    ):
+        output_path = tmp_path / "result.json"
+
+        result = _run_evaluation(
+            sample_data,
+            output_path,
+            "ExactNoThreshold",
+            "--custom-metrics-path",
+            self._plugin(tmp_path),
+            "--stdout",
+            "full",
+        )
+
+        # The envelope is strict JSON, so NaN reaches it as a string.
+        assert result.returncode == 0, result.stderr
+        output = json.loads(output_path.read_text())
+        assert output["data"]["results"] == {"ExactNoThreshold": 0.0}
+        assert output["meta"]["metrics"]["ExactNoThreshold"] == {
+            "aggregation_method": "share_at_least",
+            "matcher": "whole",
+            "aggregator_parameters": {"threshold": "nan"},
+        }
+        assert json.loads(result.stdout) == output
 
     def test_an_aggregator_on_the_command_line_beats_the_default(
         self, sample_data, tmp_path
