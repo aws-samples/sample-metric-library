@@ -76,6 +76,19 @@ Rules for authors:
   or ``list``, the matcher reads the items and ``compute`` gets one item per
   role. A metric that declares ``ALIGNED`` (items paired by position) or
   ``ANY_ACCEPTABLE`` (alternatives) accepts only the ``whole`` matcher.
+- This file can define any number of metrics, and ``--metrics`` names any
+  of them. The runner loads one file per run: given
+  ``--custom-metrics-path`` more than once, it loads only the last file. To
+  keep metrics in several files, make them a package and pass the path of
+  its ``__init__.py``, which imports the other files with relative imports
+  (``from . import text_metrics``). A plain ``import helper_metrics`` of a
+  file next to this one works only when that folder is on ``PYTHONPATH``.
+- Metric names are unique after normalization, which keeps only letters
+  and digits and ignores case: ``MetricA`` and ``Metric_A`` are one name,
+  and the class registered later replaces the other, with a warning that
+  names both. The built-in metrics register after this file, so a metric
+  named like a built-in one is replaced by the built-in one, unless this
+  file imports ``metric_library.metrics`` before it defines the metric.
 
 Example::
 

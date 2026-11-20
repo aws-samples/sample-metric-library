@@ -976,6 +976,24 @@ Rules for authors:
 - A class that does not subclass `Metric` fails at `@MetricRegistry.register`
   with `TypeError`. A `Metric` subclass without `compute` registers but
   fails at `MetricRegistry.get_metric` with `TypeError`.
+- One run loads one custom metrics file, and the file can define any number
+  of metrics; `--metrics` names any of them. `--custom-metrics-path` takes
+  one path: given more than once, it loads only the last file. To keep
+  metrics in several files, make them a package and pass the path of its
+  `__init__.py`, which loads the other files with relative imports
+  (`from . import text_metrics`). A file that imports a module next to it by
+  name (`import helper_metrics`) loads only when that folder is on
+  `PYTHONPATH`; otherwise the run stops with
+  `cannot load the custom metrics module '<path>': No module named 'helper_metrics'`.
+  In the library, any module you import can register metrics.
+- Metric names are unique after normalization, which keeps only letters and
+  digits and ignores case, so `MetricA` and `Metric_A` are one name. A class
+  registered under a name that another class holds replaces that class, and
+  a warning names both:
+  `Metric 'metrica': custom_metrics.Metric_A replaces custom_metrics.MetricA`.
+  The built-in metrics register after the custom metrics file, so a custom
+  metric named like a built-in one is replaced by the built-in one, unless
+  the file imports `metric_library.metrics` before it defines the metric.
 - A record field that is a non-empty JSON array of scalars gives the sample
   several items in that role. By default a metric accepts exactly one item per role
   (`Multiplicity.SINGLE`) and validation rejects more before scoring. To read
@@ -1221,7 +1239,7 @@ With `--aggregation-methods weighted_mean --weight-key weight` on the records
 | `--prompt-key` | no | Key holding the prompt (see below). |
 | `--prompt-path` | no | Separate prompt source (see below). |
 | `--data-root` | no | Folder that every file named inside the data files must lie in: media paths in record values, prompt manifest entries and the entries of a keyless `--ground-truth-path` array. A path outside it, also through a symbolic link, stops the run before any metric with `record <i>: '<path>' is outside --data-root <folder>`. The path options themselves are not checked. Omitted: no folder confines the paths, and the first path outside the folder of the data file that names it logs a warning for that folder. |
-| `--custom-metrics-path` | no | Python file of custom metrics, loaded as the module `custom_metrics`. It is the only way the runner loads custom metrics: a `custom_metrics.py` in the working directory or on `PYTHONPATH` is not imported. Its code runs with your privileges. A file that fails to load stops the run with `cannot load the custom metrics module '<path>': <message>`. Omitted: only the built-in metrics are registered. |
+| `--custom-metrics-path` | no | Python file of custom metrics, loaded as the module `custom_metrics`. It is the only way the runner loads custom metrics: a `custom_metrics.py` in the working directory or on `PYTHONPATH` is not imported. Its code runs with your privileges. A file that fails to load stops the run with `cannot load the custom metrics module '<path>': <message>`. The file can define any number of metrics. Given more than once, only the last file is loaded; for metrics in several files, pass the `__init__.py` of a package (see [Creating Custom Metrics](#creating-custom-metrics)). Omitted: only the built-in metrics are registered. |
 | `--aggregation-methods` | no | Comma-separated aggregators aligned with `--metrics`: `numeric_mean`, `weighted_mean`, `median`, `quantile`, `prf`, or empty for that metric's default. One entry applies to every metric. A `prf` entry requires `labels` or `list` in `--matcher`. |
 | `--weight-key` | no | Key of the per-record weight in the execution output for every `weighted_mean` entry of `--aggregation-methods`: a finite positive number in each record, one per prediction. Required with a `weighted_mean` entry, rejected without one. |
 | `--quantile` | no | Quantile in [0, 1] for every `quantile` entry of `--aggregation-methods`. Required with a `quantile` entry, rejected without one. |
