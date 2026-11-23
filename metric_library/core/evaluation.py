@@ -296,7 +296,15 @@ class EvaluationConfiguration:
 
 @dataclass(frozen=True)
 class MetricEvaluationResult:
-    """Ordered sample outcomes and their explicit aggregate."""
+    """Ordered sample outcomes and their explicit aggregate.
+
+    ``score`` is set only when the status is COMPLETED, so a score that leaves
+    out samples never reads as a complete one; ``partial_score`` is set only
+    when the status is PARTIAL. Each is a float, the F1 at the first threshold
+    for a ``prf`` aggregate. ``aggregate.score`` holds the score of the
+    completed samples with either status, and ``aggregate.values`` the
+    precision, recall and F1 of a ``prf`` aggregate.
+    """
 
     metric_name: str
     samples: tuple[SampleResult, ...]
@@ -308,7 +316,17 @@ class MetricEvaluationResult:
 
     @property
     def score(self) -> float | None:
-        return self.aggregate.score
+        """The score over every sample, set only when the status is COMPLETED."""
+        if self.aggregate.status is EvaluationStatus.COMPLETED:
+            return self.aggregate.score
+        return None
+
+    @property
+    def partial_score(self) -> float | None:
+        """The score of the completed samples, set only when the status is PARTIAL."""
+        if self.aggregate.status is EvaluationStatus.PARTIAL:
+            return self.aggregate.score
+        return None
 
     def __post_init__(self) -> None:
         if not isinstance(self.metric_name, str) or not self.metric_name.strip():

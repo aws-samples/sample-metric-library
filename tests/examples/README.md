@@ -233,6 +233,7 @@ shows the same envelope without `data.samples` and with `output_path`:
         }
       }
     },
+    "partial_results": {},
     "status": {"Accuracy": "completed"},
     "coverage": {"Accuracy": {"succeeded": 10, "failed": 0, "skipped": 0, "coverage": 1.0}},
     "samples": {
@@ -250,7 +251,10 @@ shows the same envelope without `data.samples` and with `output_path`:
   precision-recall-F1 object of a `prf` entry (`threshold`, `precision`,
   `recall`, `f1` and the `per_class` table with the counts of every class;
   also `by_threshold` with two or more `--thresholds`), or
-  `{"error": "..."}` when the metric did not complete. In the `per_class`
+  `{"error": "..."}` when the metric did not complete: a number or object
+  there is always a score over every record. `data.partial_results[metric]`
+  holds, in the same shape, the score of the completed records of a metric
+  that left records out, and is `{}` when none did. In the `per_class`
   table, `support` is the number of records whose reference is that class
   (`tp + fn`), and `tn` is the number of records without that class.
 - `data.samples[metric]` lists one entry per record, in file order. `sample_id`
@@ -298,12 +302,16 @@ shows the same envelope without `data.samples` and with `output_path`:
   metric.
 - When a sample of a metric fails, it is `failed` with its message, and the
   other samples are still scored. The metric keeps the score of its completed
-  samples, however few; when none completed, the metric result becomes
+  samples, however few, in `data.partial_results`, and its `data.results`
+  entry becomes an error with its counts, such as
+  `{"error": "1 of 10 samples failed (coverage 0.9)"}`; when none completed,
+  the metric result becomes
   `{"error": "no sample completed: ...; sample <id>: <message>"}`. An error
   that every later sample would hit too, such as expired credentials, stops
   the metric, and the samples it stopped before are `skipped`. With
   `--on-sample-error stop`, the first failed sample stops the metric, and
-  the later samples are `skipped`; the records before it give the score, and
+  the later samples are `skipped`; the records before it give the score in
+  `data.partial_results`, and
   when the first record fails, the metric becomes
   `{"error": "sample <id>: <message>"}`.
 - A run that stops before the metrics (a missing key, a bad `--quantile` or
@@ -380,8 +388,9 @@ explanation the judge gave for it.
 
 Transient Bedrock errors are retried (3 attempts, delays of 1 s and 2 s). A
 sample that still fails, or a judge reply outside the expected JSON shape,
-fails that sample. The metric then gets the score of the other four records,
-`errors` gets the entry
+fails that sample. The metric then gets the score of the other four records
+in `data.partial_results`, its `data.results` entry becomes
+`{"error": "1 of 5 samples failed (coverage 0.8)"}`, `errors` gets the entry
 `"LLMCorrectness: 1 of 5 samples failed (coverage 0.8)"`, and the run is
 `partial`.
 Leave out `--prompt-key` and the run stops before the judge with

@@ -589,7 +589,7 @@ class TestJudgeFailures:
         )
 
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == 0.2
+        assert result.partial_score == 0.2
         assert _statuses(result) == (
             SampleStatus.COMPLETED,
             SampleStatus.FAILED,
@@ -623,7 +623,7 @@ class TestJudgeFailures:
         )
 
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == 0.2
+        assert result.partial_score == 0.2
         assert _statuses(result) == (
             SampleStatus.COMPLETED,
             SampleStatus.FAILED,
@@ -757,7 +757,7 @@ class TestOtherMetricsShareTheComposition:
 
         # The completed sample gives the score; the failed one keeps its error.
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == 0.2
+        assert result.partial_score == 0.2
         assert _statuses(result) == (SampleStatus.COMPLETED, SampleStatus.FAILED)
         assert result.samples[0].score == 0.2
         assert "LLM judge score must be between 0.0 and 1.0" in result.samples[1].error

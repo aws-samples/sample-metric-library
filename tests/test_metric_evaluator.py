@@ -834,7 +834,7 @@ class TestRetryPolicy:
         client_factory.assert_called_once_with()
         assert events == expected_events
         assert tuple(sample.status for sample in result.samples) == expected_statuses
-        assert result.score == score
+        assert result.aggregate.score == score
 
     def test_blank_error_message_falls_back_to_the_type_name(self, monkeypatch):
         _register(monkeypatch, SequenceMetric)
@@ -1070,7 +1070,7 @@ class TestDetailedLLMCorrectnessEvaluation:
             assert sample.error is None
         # The sample scored before the stop gives the score.
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == 0.2
+        assert result.partial_score == 0.2
         assert result.aggregate.total_count == 4
         assert result.aggregate.succeeded_count == 1
         assert result.aggregate.failed_count == 1
@@ -1147,7 +1147,7 @@ class TestDetailedLLMCorrectnessEvaluation:
         assert "ThrottlingException" in result.samples[1].error
         assert "once" in result.samples[1].error
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == 0.2
+        assert result.partial_score == 0.2
         assert result.aggregate.succeeded_count == 1
         assert result.aggregate.failed_count == 1
         assert result.aggregate.skipped_count == 1
@@ -1449,7 +1449,7 @@ class TestAggregationMethodDispatch:
         assert client.query.call_count == 4
         sleeper.assert_called_once_with(1.0)
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == pytest.approx(0.65)
+        assert result.partial_score == pytest.approx(0.65)
         assert result.aggregate.method == "weighted_mean"
         assert result.aggregate.denominator == 4.0
         assert result.aggregate.coverage == 2 / 3
@@ -2392,7 +2392,7 @@ class TestConcurrentScoring:
             assert sample.error is None
         # Only sample 0, before the reported failure, gives the score.
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == 1.0
+        assert result.partial_score == 1.0
         assert result.aggregate.succeeded_count == 1
         assert result.aggregate.failed_count == 1
         assert result.aggregate.skipped_count == 2
@@ -2681,10 +2681,10 @@ class TestConcurrentScoring:
 class TestContinueOnSampleError:
     """With ``on_sample_error="continue"``, a failed sample does not stop the metric.
 
-    The metric is COMPLETED with the score of its completed samples, however
-    few, and FAILED only when none completed. The scoring stops early only on
-    an error that every later sample would hit too; the samples it did not
-    score are SKIPPED.
+    The metric is PARTIAL, with the score of its completed samples, however
+    few, in ``partial_score``, and FAILED only when none completed. The
+    scoring stops early only on an error that every later sample would hit
+    too; the samples it did not score are SKIPPED.
     """
 
     COMPLETED = SampleStatus.COMPLETED
@@ -2728,7 +2728,7 @@ class TestContinueOnSampleError:
 
         assert scored == 10
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == pytest.approx((4.5 - 0.3) / 9)
+        assert result.partial_score == pytest.approx((4.5 - 0.3) / 9)
         assert result.aggregate.coverage == 0.9
         assert result.samples[3].status is self.FAILED
         assert result.samples[3].error == "the judge reply quotes the record"
@@ -2797,7 +2797,7 @@ class TestContinueOnSampleError:
         assert result.samples[3].error_category == category
         # The 3 samples scored before the stop give the score.
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == 0.5
+        assert result.partial_score == 0.5
         assert result.aggregate.coverage == 3 / 20
         assert self._messages(caplog)[-2:] == [
             f"Stopping SequenceMetric: {category} would fail every later sample",
@@ -2850,7 +2850,7 @@ class TestContinueOnSampleError:
         assert scored == len(outcomes)
         assert self.SKIPPED not in [sample.status for sample in result.samples]
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == pytest.approx(0.5)
+        assert result.partial_score == pytest.approx(0.5)
         assert result.aggregate.coverage == coverage
         assert self._stops(caplog) == []
 
@@ -2895,7 +2895,7 @@ class TestContinueOnSampleError:
 
         assert client.score.call_count == 20
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == 1.0
+        assert result.partial_score == 1.0
         assert result.aggregate.failed_count == 12
         assert self._stops(caplog) == []
 
@@ -2914,7 +2914,7 @@ class TestContinueOnSampleError:
             *[self.SKIPPED] * 16,
         ]
         assert result.status is EvaluationStatus.PARTIAL
-        assert result.score == pytest.approx(0.5)
+        assert result.partial_score == pytest.approx(0.5)
         assert result.aggregate.coverage == 3 / 20
 
     def test_stop_mode_fails_the_metric_when_the_first_sample_fails(self, monkeypatch):
@@ -2992,6 +2992,98 @@ class TestContinueOnSampleError:
             self.COMPLETED,
             *[self.SKIPPED] * 4,
         ]
+
+
+class TestScoreAndPartialScore:
+    """``score`` is set only when the status is COMPLETED, ``partial_score`` only
+    when it is PARTIAL, so a score that leaves out samples never reads as a
+    complete one.
+
+    Both are floats, the F1 for a ``prf`` aggregate. ``aggregate.score`` keeps
+    the score of the completed samples with either status.
+    """
+
+    TERMINAL = ValueError("terminal")
+
+    @pytest.mark.parametrize(
+        ("outcomes", "status", "score", "partial_score", "aggregate_score"),
+        [
+            pytest.param(
+                [0.2, 0.4],
+                EvaluationStatus.COMPLETED,
+                pytest.approx(0.3),
+                None,
+                pytest.approx(0.3),
+                id="completed",
+            ),
+            pytest.param(
+                [0.2, TERMINAL],
+                EvaluationStatus.PARTIAL,
+                None,
+                0.2,
+                0.2,
+                id="partial",
+            ),
+            pytest.param(
+                [TERMINAL, TERMINAL],
+                EvaluationStatus.FAILED,
+                None,
+                None,
+                None,
+                id="failed",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("on_sample_error", ["continue", "stop"])
+    def test_each_status_sets_at_most_one_of_the_two_scores(
+        self,
+        monkeypatch,
+        on_sample_error,
+        outcomes,
+        status,
+        score,
+        partial_score,
+        aggregate_score,
+    ):
+        _register(monkeypatch, SequenceMetric)
+        client_factory, _ = _sequence_client(outcomes)
+
+        result = MetricRegistry.compute_metric(
+            "SequenceMetric",
+            _texts(["a", "b"]),
+            [],
+            configuration=EvaluationConfiguration(on_sample_error=on_sample_error),
+            client_factory=client_factory,
+        )
+
+        assert result.status is status
+        assert result.score == score
+        assert result.partial_score == partial_score
+        assert result.aggregate.score == aggregate_score
+
+    def test_a_partial_prf_result_gives_its_f1_like_a_completed_one(self, monkeypatch):
+        _register(monkeypatch, SequenceMetric)
+        # Sample 0 pairs label a with a; the pair of sample 1 fails.
+        client_factory, _ = _sequence_client([1.0, self.TERMINAL])
+
+        result = MetricRegistry.compute_metric(
+            "SequenceMetric",
+            _texts(["a", "b"]),
+            _texts(["a", "b"]),
+            configuration=EvaluationConfiguration(
+                aggregation_method="prf", matcher=LabelSet()
+            ),
+            client_factory=client_factory,
+        )
+
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.score is None
+        # partial_score is the F1, as score is for a completed result; the
+        # precision and recall of the completed samples stay in the aggregate.
+        assert result.partial_score == result.aggregate.values["f1"] == 1.0
+        assert result.aggregate.values["precision"] == 1.0
+        assert result.aggregate.values["recall"] == 1.0
+        assert list(result.aggregate.values["per_class"]) == ["a"]
 
 
 class TestThreadSafeFlag:
