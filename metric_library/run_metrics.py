@@ -897,10 +897,10 @@ def main():
             "the other samples are scored, and the metric gets the score of its "
             "completed samples in data.partial_results, or fails when none "
             "completed; it stops early only on an error that every later "
-            "sample would hit too, such as expired credentials. stop: the first "
-            "failed sample stops its metric, which gets the score of the "
-            "samples before it in data.partial_results, or fails when there "
-            "are none. Omitted: continue."
+            "sample would hit too, such as expired credentials or a wrong "
+            "--model-id. stop: the first failed sample stops its metric, which "
+            "gets the score of the samples before it in data.partial_results, "
+            "or fails when there are none. Omitted: continue."
         ),
     )
     args = parser.parse_args()

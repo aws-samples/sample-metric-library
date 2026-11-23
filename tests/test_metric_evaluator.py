@@ -109,6 +109,23 @@ _FATAL_EXCEPTIONS = (
     (SSOTokenLoadError, {"error_msg": "failed"}),
     (TokenRetrievalError, {"provider": "sso", "error_msg": "failed"}),
 )
+# The ValidationException messages of a wrong model ID, as Bedrock returned
+# them in us-east-1, where the apostrophe of "isn’t" is ’, and as its
+# documentation writes them, with '. Each one stops the metric too; any other
+# ValidationException fails only its own sample.
+_MODEL_ID_VALIDATION_MESSAGES = {
+    "unknown-model-id": "The provided model identifier is invalid.",
+    "base-model-id": (
+        "Invocation of model ID anthropic.claude-sonnet-4-6 with on-demand "
+        "throughput isn\u2019t supported. Retry your request with the ID or ARN "
+        "of an inference profile that contains this model."
+    ),
+    "base-model-id-as-documented": (
+        "Invocation of model ID anthropic.claude-sonnet-4-6 with on-demand "
+        "throughput isn't supported. Retry your request with the ID or ARN of "
+        "an inference profile that contains this model."
+    ),
+}
 
 
 @pytest.fixture(autouse=True)
@@ -2745,6 +2762,21 @@ class TestContinueOnSampleError:
         "error",
         [
             pytest.param(lambda: _client_error("ValidationException"), id="validation"),
+            # A ValidationException whose message does not name the model ID.
+            pytest.param(
+                lambda: _client_error(
+                    "ValidationException", "Input is too long for requested model."
+                ),
+                id="validation-input-too-long",
+            ),
+            pytest.param(
+                lambda: _client_error(
+                    "ValidationException",
+                    "The model returned the following errors: image exceeds 5 MB "
+                    "maximum",
+                ),
+                id="validation-image-too-large",
+            ),
             pytest.param(lambda: _client_error("ModelErrorException"), id="model"),
             pytest.param(lambda: _client_error("ThrottlingException"), id="throttled"),
             pytest.param(
@@ -2778,6 +2810,16 @@ class TestContinueOnSampleError:
                 )
                 for error_type, kwargs in _FATAL_EXCEPTIONS
             ],
+            *[
+                pytest.param(
+                    lambda message=message: _client_error(
+                        "ValidationException", message
+                    ),
+                    "bedrock:ValidationException",
+                    id=f"ValidationException-{name}",
+                )
+                for name, message in _MODEL_ID_VALIDATION_MESSAGES.items()
+            ],
         ],
     )
     def test_an_error_that_every_later_sample_would_hit_stops_the_metric(
@@ -2810,6 +2852,11 @@ class TestContinueOnSampleError:
         assert set(evaluation._FATAL_EXCEPTIONS) == {
             error_type for error_type, _ in _FATAL_EXCEPTIONS
         }
+        # The README quotes these parts of the messages of a wrong model ID.
+        assert evaluation._FATAL_VALIDATION_MESSAGES == (
+            "The provided model identifier is invalid",
+            "with on-demand throughput isn",
+        )
 
     def test_a_stop_before_any_completed_sample_fails_the_metric(self, monkeypatch):
         outcomes = [_client_error("AccessDeniedException")] + [0.5] * 9
@@ -2950,6 +2997,42 @@ class TestContinueOnSampleError:
         assert client.score.call_count == 20
         assert result.status is EvaluationStatus.PARTIAL
         assert [sample.ordinal for sample in result.samples if sample.error] == [2]
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            pytest.param(message, id=name)
+            for name, message in _MODEL_ID_VALIDATION_MESSAGES.items()
+        ],
+    )
+    def test_a_wrong_model_id_stops_every_worker(self, monkeypatch, message):
+        # Every judge call gets the error of a wrong model ID. The 4 default
+        # workers start 4 samples; once one fails, no other sample starts, and
+        # a started sample that has not made its call yet makes none.
+        _register(monkeypatch, ProbeMetric)
+
+        def score(sample):
+            raise _client_error("ValidationException", message)
+
+        client_factory, client = _probe_client(score)
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts([f"value-{index}" for index in range(20)]),
+            [],
+            client_factory=client_factory,
+        )
+
+        calls = client.score.call_count
+        assert 1 <= calls <= 4
+        assert result.status is EvaluationStatus.FAILED
+        assert result.aggregate.failed_count == calls
+        assert result.aggregate.skipped_count == 20 - calls
+        assert all(
+            sample.error_category == "bedrock:ValidationException"
+            for sample in result.samples
+            if sample.status is self.FAILED
+        )
 
     def test_a_stop_keeps_the_result_of_a_later_sample_in_flight(self, monkeypatch):
         # Two workers: sample 1 is inside its call when sample 0 fails with an

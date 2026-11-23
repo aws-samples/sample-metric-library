@@ -181,11 +181,11 @@ class EvaluationConfiguration:
     share; it is FAILED only when no sample completed. The scoring stops
     early, and the samples it has not scored are SKIPPED, only when a sample
     fails with an error that every later sample would hit too, such as
-    expired credentials or a model without access. With ``"stop"``, a sample
-    that fails stops the evaluation: later samples are skipped, and the
-    aggregate is PARTIAL with the score of the earlier samples, or
-    FAILED when the first sample failed. In both modes the aggregate is
-    COMPLETED only when every sample completed.
+    expired credentials, a model without access or a wrong model ID. With
+    ``"stop"``, a sample that fails stops the evaluation: later samples are
+    skipped, and the aggregate is PARTIAL with the score of the earlier
+    samples, or FAILED when the first sample failed. In both modes the
+    aggregate is COMPLETED only when every sample completed.
 
     Retries wait ``min(max_delay, initial_delay * multiplier ** (n - 1))``
     seconds after the ``n``-th failed attempt.
@@ -1058,7 +1058,9 @@ _TRANSIENT_TRANSPORT_EXCEPTIONS = (
 # Errors that every later sample of the metric would hit too: the credentials,
 # the access to the model or the model itself is wrong, which no retry and no
 # other sample fixes. With on_sample_error="continue", the first one stops the
-# metric. A ValidationException is not here: it can come from one sample.
+# metric. A ValidationException is not here, as one sample can cause it, such
+# as one longer than the model's context window; only the messages in
+# _FATAL_VALIDATION_MESSAGES make it fatal.
 _FATAL_CLIENT_ERROR_CODES = frozenset(
     {
         "ExpiredTokenException",
@@ -1084,13 +1086,27 @@ _FATAL_EXCEPTIONS = (
     SSOTokenLoadError,
     TokenRetrievalError,
 )
+# Parts of the ValidationException messages that the model ID causes, so that
+# every later sample gets them too: an ID that names no model or inference
+# profile, and the ID of a base model that only an inference profile can call.
+# Each part ends before an apostrophe, which Bedrock writes as ’ and its
+# documentation as '. The match ignores case.
+_FATAL_VALIDATION_MESSAGES = (
+    "The provided model identifier is invalid",
+    "with on-demand throughput isn",
+)
 
 
 def _is_fatal(error: Exception) -> bool:
     """Return whether every later sample would fail with ``error`` too."""
-    if isinstance(error, ClientError):
-        return _safe_client_error_code(error) in _FATAL_CLIENT_ERROR_CODES
-    return isinstance(error, _FATAL_EXCEPTIONS)
+    if not isinstance(error, ClientError):
+        return isinstance(error, _FATAL_EXCEPTIONS)
+    code = _safe_client_error_code(error)
+    if code == "ValidationException":
+        # Only matched, never logged: a message can quote dataset content.
+        message = (_safe_client_error_field(error, "Message") or "").casefold()
+        return any(part.casefold() in message for part in _FATAL_VALIDATION_MESSAGES)
+    return code in _FATAL_CLIENT_ERROR_CODES
 
 
 def _safe_type_name(error: BaseException) -> str:
@@ -1108,6 +1124,11 @@ def _safe_type_name(error: BaseException) -> str:
 
 def _safe_client_error_code(error: ClientError) -> str | None:
     """Extract plain dictionary-shaped ClientError metadata conservatively."""
+    return _safe_client_error_field(error, "Code")
+
+
+def _safe_client_error_field(error: ClientError, key: str) -> str | None:
+    """Return the string ``key`` of a ClientError's ``Error`` metadata, else None."""
     try:
         response = error.response
         if not isinstance(response, dict):
@@ -1115,10 +1136,10 @@ def _safe_client_error_code(error: ClientError) -> str | None:
         error_metadata = response.get("Error")
         if not isinstance(error_metadata, dict):
             return None
-        code = error_metadata.get("Code")
-        if type(code) is not str:
+        value = error_metadata.get(key)
+        if type(value) is not str:
             return None
-        return code
+        return value
     except Exception:
         return None
 

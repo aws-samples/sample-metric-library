@@ -307,7 +307,8 @@ shows the same envelope without `data.samples` and with `output_path`:
   `{"error": "1 of 10 samples failed (coverage 0.9)"}`; when none completed,
   the metric result becomes
   `{"error": "no sample completed: ...; sample <id>: <message>"}`. An error
-  that every later sample would hit too, such as expired credentials, stops
+  that every later sample would hit too, such as expired credentials or a
+  wrong `--model-id`, stops
   the metric, and the samples it stopped before are `skipped`. With
   `--on-sample-error stop`, the first failed sample stops the metric, and
   the later samples are `skipped`; the records before it give the score in
