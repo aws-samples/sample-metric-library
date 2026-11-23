@@ -72,6 +72,10 @@ MAX_WORKERS_LIMIT = MAX_POOL_CONNECTIONS
 # metric that several workers scored is to lower max_workers.
 THROTTLED_CATEGORY = "bedrock:ThrottlingException"
 
+# How many lines about its failed samples and retried attempts one metric logs
+# at WARNING; the later ones go to DEBUG.
+SAMPLE_LOG_LIMIT = 10
+
 # One ``compute_matrix`` call scores at most this many predicted items and
 # this many reference items.
 MATRIX_BLOCK_SIZE = 10
@@ -424,6 +428,37 @@ class _Cutoff:
             raise _SampleSkipped
 
 
+class _SampleLog:
+    """Log the lines of one metric's samples, the first ones at WARNING.
+
+    Each failed sample and each retried attempt logs a line that names its
+    record by its position from 1, as the runner numbers records without
+    ``--sample-id-key``. After ``SAMPLE_LOG_LIMIT`` such lines, one more
+    WARNING line says that the later ones go to DEBUG, so that a metric with
+    many failed samples does not fill the log. Workers log their retries on
+    their own threads, so a lock guards the count.
+    """
+
+    def __init__(self, metric_name: str) -> None:
+        self.metric_name = metric_name
+        self._count = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, message: str, *args) -> None:
+        with self._lock:
+            self._count += 1
+            count = self._count
+        if count <= SAMPLE_LOG_LIMIT:
+            logger.warning(message, *args)
+            return
+        if count == SAMPLE_LOG_LIMIT + 1:
+            logger.warning(
+                "%s: its later sample failures and retries are logged at DEBUG",
+                self.metric_name,
+            )
+        logger.debug(message, *args)
+
+
 class _SampleFailures:
     """Apply ``on_sample_error`` to the samples of one metric as they fail.
 
@@ -437,10 +472,12 @@ class _SampleFailures:
         metric_name: str,
         configuration: EvaluationConfiguration,
         cutoff: _Cutoff,
+        sample_log: _SampleLog,
     ) -> None:
         self._metric_name = metric_name
         self._configuration = configuration
         self._cutoff = cutoff
+        self._sample_log = sample_log
 
     @property
     def stopped(self) -> bool:
@@ -449,9 +486,9 @@ class _SampleFailures:
     def failed(self, sample: EvaluationSample, error: Exception) -> None:
         category = _classify_failure(error)[1]
         # The category, not the message: the message can quote dataset content.
-        logger.warning(
-            "Sample %s of %s failed with %s",
-            sample.sample_id,
+        self._sample_log(
+            "Record %d of %s failed with %s",
+            sample.ordinal + 1,
             self._metric_name,
             category,
         )
@@ -546,11 +583,12 @@ def evaluate_metric(
     )
     client = _LazyClient(client_factory or BedrockClient)
     cutoff = _Cutoff()
+    sample_log = _SampleLog(metric_name)
 
     def score(sample: EvaluationSample) -> SampleResult:
         if isinstance(matcher, WholeValue):
             return _score_with_retries(
-                metric, sample, client, configuration, sleeper, cutoff
+                metric, sample, client, configuration, sleeper, cutoff, sample_log
             )
         return _score_items(
             metric,
@@ -561,10 +599,11 @@ def evaluate_metric(
             configuration,
             sleeper,
             cutoff,
+            sample_log,
         )
 
     workers = _scoring_workers(metric, configuration.max_workers, len(samples))
-    failures = _SampleFailures(metric_name, configuration, cutoff)
+    failures = _SampleFailures(metric_name, configuration, cutoff, sample_log)
     if workers > 1:
         outcomes = _score_concurrently(samples, score, workers, cutoff, failures)
     else:
@@ -573,6 +612,7 @@ def evaluate_metric(
     if configuration.on_sample_error == "stop":
         sample_results = _fail_fast_results(samples, outcomes)
     else:
+        _score_again(metric_name, samples, outcomes, score, failures)
         sample_results = _continued_results(samples, outcomes)
     _log_failures(metric_name, sample_results)
     # In both modes, the score comes from the completed samples, however few.
@@ -662,6 +702,57 @@ def _score_concurrently(
     return outcomes
 
 
+def _score_again(
+    metric_name: str,
+    samples: tuple[EvaluationSample, ...],
+    outcomes: dict[int, SampleResult | Exception],
+    score: Callable[[EvaluationSample], SampleResult],
+    failures: _SampleFailures,
+) -> None:
+    """Score again, one at a time, the samples that failed with a transient error.
+
+    Several workers can exceed a quota that one sample at a time stays under,
+    and the client does not slow down below 30 requests a minute, so a
+    throttled metric can end with a few samples that one more try would score.
+    In input order, each gets its full retries again, on the calling thread,
+    and ``outcomes`` gets its new result or error. The pass ends at the first
+    sample that fails again, so a quota that is still exhausted costs one
+    more sample, and it does not run after a stop. Continue mode only.
+    """
+    if failures.stopped:
+        return
+    again = [
+        sample
+        for sample in samples
+        if isinstance(outcomes.get(sample.ordinal), Exception)
+        and _classify_failure(outcomes[sample.ordinal])[0]
+    ]
+    if not again:
+        return
+    logger.warning(
+        "%s: scoring again, one at a time, %d %s that failed with a transient error",
+        metric_name,
+        len(again),
+        "sample" if len(again) == 1 else "samples",
+    )
+    completed = 0
+    for sample in again:
+        try:
+            outcomes[sample.ordinal] = score(sample)
+        except Exception as error:
+            outcomes[sample.ordinal] = error
+            failures.failed(sample, error)
+            break
+        completed += 1
+    logger.warning(
+        "%s: %d of %d samples completed when scored again%s",
+        metric_name,
+        completed,
+        len(again),
+        "" if completed == len(again) else "; the pass ended at one that failed again",
+    )
+
+
 def _fail_fast_results(
     samples: tuple[EvaluationSample, ...],
     outcomes: dict[int, SampleResult | Exception],
@@ -722,6 +813,22 @@ def _skipped_result(sample: EvaluationSample) -> SampleResult:
     )
 
 
+def _failure_categories(results: tuple[SampleResult, ...]) -> str:
+    """The failed samples by error category, the most frequent first.
+
+    For example ``bedrock:ThrottlingException 10, exception:ValueError 2``;
+    empty when no sample failed.
+    """
+    categories = Counter(
+        result.error_category
+        for result in results
+        if result.status is SampleStatus.FAILED
+    )
+    return ", ".join(
+        f"{category} {count}" for category, count in categories.most_common()
+    )
+
+
 def _log_failures(metric_name: str, results: tuple[SampleResult, ...]) -> None:
     """Log one line with the outcome of a metric that has failed samples.
 
@@ -729,12 +836,8 @@ def _log_failures(metric_name: str, results: tuple[SampleResult, ...]) -> None:
     failed ones by error category and the skipped ones, and says whether the
     metric has a score or failed because no sample completed.
     """
-    categories = Counter(
-        result.error_category
-        for result in results
-        if result.status is SampleStatus.FAILED
-    )
-    if not categories:
+    failed = sum(result.status is SampleStatus.FAILED for result in results)
+    if not failed:
         return
     completed = sum(result.status is SampleStatus.COMPLETED for result in results)
     skipped = sum(result.status is SampleStatus.SKIPPED for result in results)
@@ -743,10 +846,8 @@ def _log_failures(metric_name: str, results: tuple[SampleResult, ...]) -> None:
         metric_name,
         completed,
         len(results),
-        categories.total(),
-        ", ".join(
-            f"{category} {count}" for category, count in categories.most_common()
-        ),
+        failed,
+        _failure_categories(results),
         skipped,
         "the score comes from the completed samples"
         if completed
@@ -818,10 +919,16 @@ def _score_with_retries(
     configuration: EvaluationConfiguration,
     sleeper: Callable[[float], None],
     cutoff: _Cutoff,
+    sample_log: _SampleLog,
 ) -> SampleResult:
     """Score one whole sample: the metric score is the sample score."""
     output = _call_with_retries(
-        lambda: metric.compute(sample, client), sample, configuration, sleeper, cutoff
+        lambda: metric.compute(sample, client),
+        sample,
+        configuration,
+        sleeper,
+        cutoff,
+        sample_log,
     )
     if isinstance(output, SampleOutput):
         return SampleResult(
@@ -848,6 +955,7 @@ def _score_items(
     configuration: EvaluationConfiguration,
     sleeper: Callable[[float], None],
     cutoff: _Cutoff,
+    sample_log: _SampleLog,
 ) -> SampleResult:
     """Score every candidate pair of items of each class and record the matches.
 
@@ -871,7 +979,15 @@ def _score_items(
         columns = [item for c, item in expected if c == item_class]
         if isinstance(metric, LLMBatchMetric) and len(rows) * len(columns) > 1:
             scores = _matrix_scores(
-                metric, sample, rows, columns, client, configuration, sleeper, cutoff
+                metric,
+                sample,
+                rows,
+                columns,
+                client,
+                configuration,
+                sleeper,
+                cutoff,
+                sample_log,
             )
         else:
             scores = []
@@ -892,6 +1008,7 @@ def _score_items(
                         configuration,
                         sleeper,
                         cutoff,
+                        sample_log,
                     )
                     row.append(
                         output.score if isinstance(output, SampleOutput) else output
@@ -940,6 +1057,7 @@ def _matrix_scores(
     configuration: EvaluationConfiguration,
     sleeper: Callable[[float], None],
     cutoff: _Cutoff,
+    sample_log: _SampleLog,
 ) -> list[list[float]]:
     """Score one class with one ``compute_matrix`` call for each block of items."""
     scores = [[] for _ in rows]
@@ -955,6 +1073,7 @@ def _matrix_scores(
                 configuration,
                 sleeper,
                 cutoff,
+                sample_log,
             )
             if not (
                 isinstance(block, list)
@@ -979,11 +1098,13 @@ def _call_with_retries(
     configuration: EvaluationConfiguration,
     sleeper: Callable[[float], None],
     cutoff: _Cutoff,
+    sample_log: _SampleLog,
 ):
     """Run one metric call for ``sample`` and retry only eligible transient failures.
 
     Before each attempt and each wait, ``cutoff`` stops a sample that an
-    earlier failed sample has made SKIPPED.
+    earlier failed sample has made SKIPPED. Each retry logs a line through
+    ``sample_log``.
     """
     for failed_attempt in range(1, configuration.max_attempts + 1):
         cutoff.check(sample)
@@ -1002,9 +1123,10 @@ def _call_with_retries(
             )
             # The category, not the message: the message can quote dataset
             # content, and the envelope reports it if the sample fails.
-            logger.warning(
-                "Sample %s attempt %d/%d failed with %s; retrying in %s seconds",
-                sample.sample_id,
+            sample_log(
+                "Record %d of %s: attempt %d/%d failed with %s; retrying in %s seconds",
+                sample.ordinal + 1,
+                sample_log.metric_name,
                 failed_attempt,
                 configuration.max_attempts,
                 category,

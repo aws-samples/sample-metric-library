@@ -298,15 +298,16 @@ shows the same envelope without `data.samples` and with `output_path`:
   one, for example), `failed` / 1 when every metric is `failed` or the runner
   stopped before the metrics. `errors` lists one
   `"<metric>: <message>"` entry per failed metric, and one such as
-  `"Accuracy: 1 of 10 samples failed (coverage 0.9)"` per `partial`
-  metric.
+  `"Accuracy: 1 of 10 samples failed (coverage 0.9); exception:ValueError 1; sample 7: <message>"`
+  per `partial` metric: its counts, its failed samples by error category
+  and its first failed sample.
 - When a sample of a metric fails, it is `failed` with its message, and the
   other samples are still scored. The metric keeps the score of its completed
   samples, however few, in `data.partial_results`, and its `data.results`
-  entry becomes an error with its counts, such as
-  `{"error": "1 of 10 samples failed (coverage 0.9)"}`; when none completed,
-  the metric result becomes
-  `{"error": "no sample completed: ...; sample <id>: <message>"}`. An error
+  entry becomes the same error. When none completed, the metric result
+  becomes `{"error": "no sample completed: ...; sample <id>: <message>"}`.
+  A sample that failed with an error that the engine retries, such as a
+  throttled call, is scored once more at the end, one at a time. An error
   that every later sample would hit too, such as expired credentials or a
   wrong `--model-id`, stops
   the metric, and the samples it stopped before are `skipped`. With
@@ -390,9 +391,9 @@ explanation the judge gave for it.
 Transient Bedrock errors are retried (3 attempts, delays of 1 s and 2 s). A
 sample that still fails, or a judge reply outside the expected JSON shape,
 fails that sample. The metric then gets the score of the other four records
-in `data.partial_results`, its `data.results` entry becomes
-`{"error": "1 of 5 samples failed (coverage 0.8)"}`, `errors` gets the entry
-`"LLMCorrectness: 1 of 5 samples failed (coverage 0.8)"`, and the run is
+in `data.partial_results`, `errors` gets an entry such as
+`"LLMCorrectness: 1 of 5 samples failed (coverage 0.8); exception:ValueError 1; sample 4: <message>"`,
+its `data.results` entry becomes the same error, and the run is
 `partial`.
 Leave out `--prompt-key` and the run stops before the judge with
 `prompts are required for LLMCorrectness`.

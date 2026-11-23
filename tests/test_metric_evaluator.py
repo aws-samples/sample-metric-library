@@ -541,7 +541,8 @@ class TestRetryPolicy:
         assert sleeper.calls == [1.0]
         warnings = _retry_warnings(caplog)
         assert len(warnings) == 1
-        assert "Sample 0" in warnings[0]
+        # The line names the record by its position from 1, and the metric.
+        assert "Record 1 of LLMCorrectness" in warnings[0]
         assert "attempt 1/2" in warnings[0]
         assert "1.0" in warnings[0]
         assert expected_category in warnings[0]
@@ -556,10 +557,13 @@ class TestRetryPolicy:
         sleeper = _RecordingSleeper()
         failures = [_client_error("ThrottlingException") for _ in range(8)]
 
+        # Stop mode: a sample that failed is not scored again.
         result, client = _run_builtin_case(
             failures,
             sleeper,
-            configuration=EvaluationConfiguration(max_attempts=8),
+            configuration=EvaluationConfiguration(
+                max_attempts=8, on_sample_error="stop"
+            ),
         )
 
         assert client.query.call_count == 8
@@ -595,10 +599,13 @@ class TestRetryPolicy:
         sleeper = _RecordingSleeper()
         failures = [_client_error("ThrottlingException") for _ in range(5)]
 
+        # Stop mode: a sample that failed is not scored again.
         result, client = _run_builtin_case(
             failures,
             sleeper,
-            configuration=EvaluationConfiguration(max_attempts=5, **timing),
+            configuration=EvaluationConfiguration(
+                max_attempts=5, on_sample_error="stop", **timing
+            ),
         )
 
         assert client.query.call_count == 5
@@ -740,10 +747,13 @@ class TestRetryPolicy:
         caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
         sleeper = _RecordingSleeper()
 
+        # Stop mode: a sample that failed is not scored again.
         result, client = _run_builtin_case(
             [_client_error("ThrottlingException")],
             sleeper,
-            configuration=EvaluationConfiguration(max_attempts=1),
+            configuration=EvaluationConfiguration(
+                max_attempts=1, on_sample_error="stop"
+            ),
         )
 
         assert result.status is EvaluationStatus.FAILED
@@ -1444,6 +1454,9 @@ class TestAggregationMethodDispatch:
                 _judge(0.8),
                 _client_error("ThrottlingException", "x"),
                 _client_error("ServiceUnavailableException", "y"),
+                # Continue mode scores that sample again, and it fails again.
+                _client_error("ThrottlingException", "x"),
+                _client_error("ServiceUnavailableException", "y"),
             ]
         )
         configuration = EvaluationConfiguration(
@@ -1463,8 +1476,9 @@ class TestAggregationMethodDispatch:
             sleeper=sleeper,
         )
 
-        assert client.query.call_count == 4
-        sleeper.assert_called_once_with(1.0)
+        tries = 2 if on_sample_error == "continue" else 1
+        assert client.query.call_count == 2 + 2 * tries
+        assert sleeper.call_args_list == [call(1.0)] * tries
         assert result.status is EvaluationStatus.PARTIAL
         assert result.partial_score == pytest.approx(0.65)
         assert result.aggregate.method == "weighted_mean"
@@ -2711,10 +2725,14 @@ class TestContinueOnSampleError:
     DOWN = ValueError("down")
 
     @staticmethod
-    def _run(monkeypatch, outcomes, **options):
-        """Score ``SequenceMetric``, one sample at a time, on ``outcomes``."""
+    def _run(monkeypatch, outcomes, again=(), **options):
+        """Score ``SequenceMetric``, one sample at a time, on ``outcomes``.
+
+        ``again`` holds the outcomes of the second pass, which scores once more
+        the samples that failed with a transient error.
+        """
         _register(monkeypatch, SequenceMetric)
-        client_factory, client = _sequence_client(outcomes)
+        client_factory, client = _sequence_client([*outcomes, *again])
         result = MetricRegistry.compute_metric(
             "SequenceMetric",
             _texts([f"value-{index}" for index in range(len(outcomes))]),
@@ -2752,21 +2770,24 @@ class TestContinueOnSampleError:
         assert result.samples[3].error_category == "exception:ValueError"
         # The logs name the category, never the message.
         assert self._messages(caplog) == [
-            "Sample 3 of SequenceMetric failed with exception:ValueError",
+            "Record 4 of SequenceMetric failed with exception:ValueError",
             "SequenceMetric: 9 of 10 samples completed, 1 failed "
             "(exception:ValueError 1), 0 skipped; the score comes from the "
             "completed samples",
         ]
 
     @pytest.mark.parametrize(
-        "error",
+        ("error", "transient"),
         [
-            pytest.param(lambda: _client_error("ValidationException"), id="validation"),
+            pytest.param(
+                lambda: _client_error("ValidationException"), False, id="validation"
+            ),
             # A ValidationException whose message does not name the model ID.
             pytest.param(
                 lambda: _client_error(
                     "ValidationException", "Input is too long for requested model."
                 ),
+                False,
                 id="validation-input-too-long",
             ),
             pytest.param(
@@ -2775,21 +2796,33 @@ class TestContinueOnSampleError:
                     "The model returned the following errors: image exceeds 5 MB "
                     "maximum",
                 ),
+                False,
                 id="validation-image-too-large",
             ),
-            pytest.param(lambda: _client_error("ModelErrorException"), id="model"),
-            pytest.param(lambda: _client_error("ThrottlingException"), id="throttled"),
             pytest.param(
-                lambda: ReadTimeoutError(endpoint_url=_TEST_ENDPOINT), id="read-timeout"
+                lambda: _client_error("ModelErrorException"), False, id="model"
+            ),
+            pytest.param(
+                lambda: _client_error("ThrottlingException"), True, id="throttled"
+            ),
+            pytest.param(
+                lambda: ReadTimeoutError(endpoint_url=_TEST_ENDPOINT),
+                True,
+                id="read-timeout",
             ),
         ],
     )
-    def test_an_error_of_one_sample_does_not_stop_the_metric(self, monkeypatch, error):
+    def test_an_error_of_one_sample_does_not_stop_the_metric(
+        self, monkeypatch, error, transient
+    ):
         outcomes = [0.5] * 3 + [error()] + [0.5] * 16
+        # The second pass scores a sample that failed with a transient error
+        # once more; it fails again.
+        again = [error()] if transient else []
 
-        result, scored = self._run(monkeypatch, outcomes)
+        result, scored = self._run(monkeypatch, outcomes, again)
 
-        assert scored == 20
+        assert scored == 20 + len(again)
         assert result.status is EvaluationStatus.PARTIAL
         assert result.aggregate.failed_count == 1
 
@@ -2940,7 +2973,9 @@ class TestContinueOnSampleError:
             client_factory=client_factory,
         )
 
-        assert client.score.call_count == 20
+        # The 20 samples, then sample 0 once more, which Bedrock throttles
+        # again, so the second pass ends there.
+        assert client.score.call_count == 21
         assert result.status is EvaluationStatus.PARTIAL
         assert result.partial_score == 1.0
         assert result.aggregate.failed_count == 12
@@ -3074,6 +3109,201 @@ class TestContinueOnSampleError:
             self.FAILED,
             self.COMPLETED,
             *[self.SKIPPED] * 4,
+        ]
+
+
+class TestScoreAgain:
+    """Continue mode scores again, one at a time, the samples that failed with a
+    transient error, in input order, and ends that pass at the first failure.
+    """
+
+    THROTTLED = _client_error("ThrottlingException")
+
+    @staticmethod
+    def _run(monkeypatch, outcomes, **options):
+        return TestContinueOnSampleError._run(monkeypatch, outcomes, **options)
+
+    @staticmethod
+    def _messages(caplog):
+        return [record.getMessage() for record in caplog.records]
+
+    def test_a_sample_that_failed_with_a_transient_error_completes_when_scored_again(
+        self, monkeypatch, caplog
+    ):
+        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
+        outcomes = [0.5] * 3 + [self.THROTTLED] + [0.5] * 6
+
+        result, scored = self._run(monkeypatch, outcomes, again=[0.5])
+
+        assert scored == 11
+        assert result.status is EvaluationStatus.COMPLETED
+        assert result.score == 0.5
+        assert self._messages(caplog) == [
+            "Record 4 of SequenceMetric failed with bedrock:ThrottlingException",
+            "SequenceMetric: scoring again, one at a time, 1 sample that failed "
+            "with a transient error",
+            "SequenceMetric: 1 of 1 samples completed when scored again",
+        ]
+
+    def test_the_pass_ends_at_the_first_sample_that_fails_again(
+        self, monkeypatch, caplog
+    ):
+        # Records 4 and 7 are throttled; record 4 is throttled again, so the
+        # pass does not score record 7.
+        caplog.set_level(logging.WARNING, logger="metric_library.core.evaluation")
+        outcomes = [0.5] * 3 + [self.THROTTLED] + [0.5] * 2 + [self.THROTTLED]
+
+        result, scored = self._run(monkeypatch, outcomes, again=[self.THROTTLED])
+
+        assert scored == 8
+        assert result.status is EvaluationStatus.PARTIAL
+        assert [sample.ordinal for sample in result.samples if sample.error] == [3, 6]
+        assert self._messages(caplog)[2:] == [
+            "SequenceMetric: scoring again, one at a time, 2 samples that failed "
+            "with a transient error",
+            "Record 4 of SequenceMetric failed with bedrock:ThrottlingException",
+            "SequenceMetric: 0 of 2 samples completed when scored again; the pass "
+            "ended at one that failed again",
+            "SequenceMetric: 5 of 7 samples completed, 2 failed "
+            "(bedrock:ThrottlingException 2), 0 skipped; the score comes from "
+            "the completed samples",
+        ]
+
+    def test_only_a_transient_error_gets_another_try(self, monkeypatch):
+        outcomes = [0.5, ValueError("bad reply"), 0.5, self.THROTTLED, 0.5]
+
+        result, scored = self._run(monkeypatch, outcomes, again=[0.5])
+
+        assert scored == 6
+        assert [sample.status for sample in result.samples] == [
+            SampleStatus.COMPLETED,
+            SampleStatus.FAILED,
+            *[SampleStatus.COMPLETED] * 3,
+        ]
+
+    def test_stop_mode_scores_no_sample_again(self, monkeypatch):
+        outcomes = [0.5, self.THROTTLED, 0.5, 0.5]
+
+        result, scored = self._run(
+            monkeypatch, outcomes, again=[0.5], on_sample_error="stop"
+        )
+
+        assert scored == 2
+        assert result.status is EvaluationStatus.PARTIAL
+
+    def test_no_sample_is_scored_again_after_a_stop(self, monkeypatch):
+        # Record 2 is throttled; record 4 has no access to the model, which
+        # stops the metric, so a second try of record 2 would fail too.
+        outcomes = [0.5, self.THROTTLED, 0.5, _client_error("AccessDeniedException")]
+        outcomes += [0.5] * 4
+
+        result, scored = self._run(monkeypatch, outcomes, again=[0.5])
+
+        assert scored == 4
+        assert result.aggregate.skipped_count == 4
+
+    def test_the_pass_scores_one_sample_at_a_time_on_the_calling_thread(
+        self, monkeypatch
+    ):
+        # With 4 workers, records 2 and 6 are throttled on their first call.
+        _register(monkeypatch, ProbeMetric)
+        calls = {}
+        threads = []
+        lock = threading.Lock()
+
+        def score(sample):
+            with lock:
+                calls[sample.ordinal] = calls.get(sample.ordinal, 0) + 1
+                first = calls[sample.ordinal] == 1
+                if not first:
+                    threads.append(threading.current_thread())
+            if first and sample.ordinal in (1, 5):
+                raise _client_error("ThrottlingException")
+            return 1.0
+
+        client_factory, client = _probe_client(score)
+
+        result = MetricRegistry.compute_metric(
+            "ProbeMetric",
+            _texts([f"value-{index}" for index in range(8)]),
+            [],
+            configuration=EvaluationConfiguration(max_attempts=1),
+            client_factory=client_factory,
+        )
+
+        assert result.status is EvaluationStatus.COMPLETED
+        assert client.score.call_count == 10
+        assert threads == [threading.main_thread()] * 2
+
+
+class TestSampleLog:
+    """A metric logs its first ``SAMPLE_LOG_LIMIT`` sample lines at WARNING.
+
+    The lines of its failed samples and of its retried attempts count together;
+    one more WARNING line says that the later ones go to DEBUG.
+    """
+
+    def test_the_lines_after_the_limit_go_to_debug(self, monkeypatch, caplog):
+        caplog.set_level(logging.DEBUG, logger="metric_library.core.evaluation")
+        outcomes = [ValueError("bad reply")] * 12
+
+        result, _ = TestContinueOnSampleError._run(monkeypatch, outcomes)
+
+        assert result.status is EvaluationStatus.FAILED
+        by_level = {
+            level: [r.getMessage() for r in caplog.records if r.levelno == level]
+            for level in (logging.WARNING, logging.DEBUG)
+        }
+        assert by_level[logging.WARNING] == [
+            *[
+                f"Record {number} of SequenceMetric failed with exception:ValueError"
+                for number in range(1, 11)
+            ],
+            "SequenceMetric: its later sample failures and retries are logged at DEBUG",
+            "SequenceMetric: 0 of 12 samples completed, 12 failed "
+            "(exception:ValueError 12), 0 skipped; the metric failed",
+        ]
+        assert by_level[logging.DEBUG] == [
+            "Record 11 of SequenceMetric failed with exception:ValueError",
+            "Record 12 of SequenceMetric failed with exception:ValueError",
+        ]
+
+    def test_retried_attempts_count_toward_the_limit(self, monkeypatch, caplog):
+        # 11 samples, each throttled once and then scored: 11 retry lines.
+        caplog.set_level(logging.DEBUG, logger="metric_library.core.evaluation")
+        _register(monkeypatch, SequenceMetric)
+        outcomes = [
+            outcome
+            for _ in range(11)
+            for outcome in (_client_error("ThrottlingException"), 0.5)
+        ]
+        client_factory, _ = _sequence_client(outcomes)
+
+        result = MetricRegistry.compute_metric(
+            "SequenceMetric",
+            _texts([f"value-{index}" for index in range(11)]),
+            [],
+            configuration=EvaluationConfiguration(max_attempts=2),
+            client_factory=client_factory,
+            sleeper=lambda delay: None,
+        )
+
+        assert result.status is EvaluationStatus.COMPLETED
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(warnings) == 11
+        assert warnings[0] == (
+            "Record 1 of SequenceMetric: attempt 1/2 failed with "
+            "bedrock:ThrottlingException; retrying in 1.0 seconds"
+        )
+        assert warnings[-1] == (
+            "SequenceMetric: its later sample failures and retries are logged at DEBUG"
+        )
+        assert debug == [
+            "Record 11 of SequenceMetric: attempt 1/2 failed with "
+            "bedrock:ThrottlingException; retrying in 1.0 seconds"
         ]
 
 

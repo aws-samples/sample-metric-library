@@ -833,7 +833,8 @@ class TestAggregationResultContracts:
 
     def test_numeric_aggregation_rejects_values(self):
         with pytest.raises(
-            ValueError, match="values are allowed only for a completed prf aggregation"
+            ValueError,
+            match="values are allowed only for a completed or partial prf aggregation",
         ):
             AggregationResult(
                 method="numeric_mean",
@@ -850,7 +851,7 @@ class TestAggregationResultContracts:
 
     def test_completed_prf_aggregation_requires_values(self):
         with pytest.raises(
-            ValueError, match="completed prf aggregation requires values"
+            ValueError, match="completed or partial prf aggregation requires values"
         ):
             _prf_aggregate()
 
@@ -864,7 +865,8 @@ class TestAggregationResultContracts:
 
     def test_failed_prf_aggregation_rejects_values(self):
         with pytest.raises(
-            ValueError, match="values are allowed only for a completed prf aggregation"
+            ValueError,
+            match="values are allowed only for a completed or partial prf aggregation",
         ):
             _prf_aggregate(
                 status=EvaluationStatus.FAILED,
@@ -890,7 +892,7 @@ class TestAggregationResultContracts:
         )
 
         with pytest.raises(
-            ValueError, match="completed prf aggregation requires values"
+            ValueError, match="completed or partial prf aggregation requires values"
         ):
             _prf_aggregate(**partial)
         result = _prf_aggregate(**partial, values={"f1": 0.5})

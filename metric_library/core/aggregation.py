@@ -319,13 +319,15 @@ class AggregationResult:
         scored = self.status is not EvaluationStatus.FAILED
         if self.method == "prf" and scored:
             if self.values is None:
-                raise ValueError("completed prf aggregation requires values")
+                raise ValueError("completed or partial prf aggregation requires values")
             if not isinstance(self.values, dict):
                 raise TypeError("values must be a dict")
             if self.values.get("f1") != self.score:
                 raise ValueError("values['f1'] must equal score")
         elif self.values is not None:
-            raise ValueError("values are allowed only for a completed prf aggregation")
+            raise ValueError(
+                "values are allowed only for a completed or partial prf aggregation"
+            )
 
         if scored:
             object.__setattr__(self, "score", _validate_score(self.score))

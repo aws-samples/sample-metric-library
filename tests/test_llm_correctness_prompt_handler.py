@@ -1280,8 +1280,8 @@ class TestMultiPartRoles:
         }
         assert result.samples[1].details["item_scores"] == [1.0, 0.8]
         assert client.query.call_count == 2
-        first_id = result.samples[0].sample_id
-        assert f"Sample {first_id} of LLMCorrectness: {message}" in caplog.text
+        # The log names the record by its position from 1.
+        assert f"Record 1 of LLMCorrectness: {message}" in caplog.text
 
     def test_one_part_candidate_ignores_no_part_scores_and_stays_a_float(self):
         metric = MetricRegistry.get_metric("LLMCorrectness")
