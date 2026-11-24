@@ -98,12 +98,21 @@ class BedrockClient:
         # AWS_MAX_ATTEMPTS and AWS_RETRY_MODE cannot raise it. A stalled
         # connection then holds one judge call for at most 600 s x 3 per
         # engine attempt, 90 minutes with the engine's 3 default attempts.
+        # The adaptive mode is the standard mode with a rate limiter: from the
+        # first throttled response on, the client spaces out its requests. The
+        # engine's workers share the client, so a throttled metric slows down
+        # instead of failing samples. In a simulation of 4 workers, 3 s calls
+        # and a quota of 40 requests a minute, standard mode failed the
+        # metric after 40 of 100 samples in each of 4 runs; adaptive mode
+        # scored all 100 in 12 of 13 runs and 99 in the other, in about
+        # 142 s, where 2 workers, which stay under that quota, take 151 s.
+        # AWS documents the adaptive mode as experimental.
         self.client = session.client(
             "bedrock-runtime",
             region_name=self.region,
             config=Config(
                 read_timeout=600,
-                retries={"mode": "standard", "total_max_attempts": 3},
+                retries={"mode": "adaptive", "total_max_attempts": 3},
                 max_pool_connections=MAX_POOL_CONNECTIONS,
             ),
         )

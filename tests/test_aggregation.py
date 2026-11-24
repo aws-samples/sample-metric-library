@@ -20,10 +20,12 @@ from metric_library.core.aggregation import (
     SampleOutput,
     SampleResult,
     SampleStatus,
+    aggregate,
     median,
     numeric_mean,
     prf,
     quantile,
+    validate_fail_fast_sequence,
     weighted_mean,
 )
 from metric_library.core.base import Metric
@@ -339,6 +341,44 @@ class TestSampleResultContracts:
         with pytest.raises(exception, match=message):
             SampleResult("0", 0, **kwargs)
 
+    def test_a_failed_sample_keeps_its_error_category(self):
+        result = SampleResult(
+            "0",
+            0,
+            SampleStatus.FAILED,
+            error="throttled",
+            error_category="bedrock:ThrottlingException",
+        )
+
+        assert result.error_category == "bedrock:ThrottlingException"
+        assert _failed(0).error_category is None
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            pytest.param(
+                {"status": SampleStatus.COMPLETED, "score": 1.0},
+                "only failed samples can contain an error category",
+                id="completed",
+            ),
+            pytest.param(
+                {"status": SampleStatus.SKIPPED},
+                "only failed samples can contain an error category",
+                id="skipped",
+            ),
+        ],
+    )
+    def test_only_a_failed_sample_has_an_error_category(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            SampleResult("0", 0, error_category="exception:ValueError", **kwargs)
+
+    @pytest.mark.parametrize("category", ["", "  ", 1])
+    def test_an_error_category_must_be_a_non_empty_string(self, category):
+        with pytest.raises(ValueError, match="error_category must be a non-empty"):
+            SampleResult(
+                "0", 0, SampleStatus.FAILED, error="failed", error_category=category
+            )
+
 
 class TestSampleOutput:
     """Validate the score and the details that ``compute`` may return."""
@@ -482,7 +522,7 @@ class TestMatches:
 
 
 class TestNumericMean:
-    """Prove explicit denominator, coverage, and stop-on-failure accounting."""
+    """Prove explicit denominator, coverage, and failure accounting."""
 
     def test_all_success_uses_exact_ordered_builtin_mean(self):
         scores = [1.0, 1e-16, 1e-16]
@@ -495,14 +535,14 @@ class TestNumericMean:
         assert result.score == sum(scores) / len(scores)
         _assert_counts(result, total=3, succeeded=3, failed=0, skipped=0)
 
-    def test_failure_retains_counts_and_earlier_successes_without_score(self):
+    def test_one_completed_sample_is_enough_for_a_score(self):
         results = (_completed(0, 0.2), _failed(1), _skipped(2), _skipped(3))
 
         result = numeric_mean(results)
 
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
-        assert results[0].score == 0.2
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.score == 0.2
+        assert result.coverage == 0.25
         _assert_counts(result, total=4, succeeded=1, failed=1, skipped=2)
 
     def test_first_sample_failure_has_zero_denominator_and_coverage(self):
@@ -516,17 +556,34 @@ class TestNumericMean:
         with pytest.raises(ValueError, match="at least one sample result"):
             numeric_mean(())
 
-    def test_skips_require_a_prior_failure(self):
-        with pytest.raises(ValueError, match="prior failure"):
-            numeric_mean((_skipped(0), _failed(1)))
+    @pytest.mark.parametrize(
+        "results",
+        [
+            pytest.param((_skipped(0), _failed(1)), id="skipped-before-failed"),
+            pytest.param((_failed(0), _failed(1)), id="two-failed"),
+        ],
+    )
+    def test_without_a_completed_sample_the_aggregate_fails(self, results):
+        result = numeric_mean(results)
 
-    def test_only_one_failure_is_allowed(self):
-        with pytest.raises(ValueError, match="only one failed result"):
-            numeric_mean((_failed(0), _failed(1)))
+        assert result.status is EvaluationStatus.FAILED
+        assert result.score is None
 
-    def test_completed_results_cannot_follow_a_failure(self):
-        with pytest.raises(ValueError, match="completed results after failure"):
-            numeric_mean((_completed(0, 0.2), _failed(1), _completed(2, 0.8)))
+    def test_only_the_completed_samples_count_in_any_order(self):
+        results = (_completed(0, 0.2), _failed(1), _completed(2, 0.8), _skipped(3))
+
+        result = numeric_mean(results)
+
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.score == 0.5
+        assert result.denominator == 2
+        _assert_counts(result, total=4, succeeded=2, failed=1, skipped=1)
+
+    def test_aggregate_dispatches_to_the_numeric_mean(self):
+        # The engine's entry point, in both on_sample_error modes.
+        results = (_completed(0, 0.2), _failed(1), _skipped(2), _skipped(3))
+
+        assert aggregate(results, AggregationSpec()) == numeric_mean(results)
 
     def test_results_must_have_contiguous_ordinals_and_unique_ids(self):
         with pytest.raises(ValueError, match="contiguous ordinal"):
@@ -548,39 +605,152 @@ class TestNumericMean:
             numeric_mean((duplicate_id, second_duplicate))
 
 
+class TestValidateFailFastSequence:
+    """The exported check of the stop-mode shape, which no aggregator calls."""
+
+    @pytest.mark.parametrize(
+        ("results", "message"),
+        [
+            ((_skipped(0), _failed(1)), "prior failure"),
+            ((_failed(0), _failed(1)), "only one failed result"),
+            (
+                (_completed(0, 0.2), _failed(1), _completed(2, 0.8)),
+                "completed results after failure",
+            ),
+        ],
+    )
+    def test_a_sequence_that_does_not_stop_at_its_failure_is_rejected(
+        self, results, message
+    ):
+        with pytest.raises(ValueError, match=message):
+            validate_fail_fast_sequence(results)
+
+    def test_completed_then_one_failed_then_skipped_is_accepted(self):
+        validate_fail_fast_sequence((_completed(0, 0.2), _failed(1), _skipped(2)))
+
+
 class TestAggregationResultContracts:
     """Reject aggregate states the public aggregator can never produce."""
+
+    @staticmethod
+    def _failed_aggregate(succeeded_count, failed_count, skipped_count):
+        return AggregationResult(
+            method="numeric_mean",
+            status=EvaluationStatus.FAILED,
+            score=None,
+            total_count=succeeded_count + failed_count + skipped_count,
+            succeeded_count=succeeded_count,
+            failed_count=failed_count,
+            skipped_count=skipped_count,
+            denominator=succeeded_count,
+            coverage=succeeded_count / (succeeded_count + failed_count + skipped_count),
+        )
 
     @pytest.mark.parametrize(
         ("succeeded_count", "failed_count", "skipped_count"),
         [
-            (2, 0, 1),
-            (0, 2, 1),
-            (3, 0, 0),
+            pytest.param(3, 0, 0, id="all-completed"),
+            pytest.param(2, 0, 1, id="completed-and-skipped"),
+            pytest.param(2, 1, 1, id="completed-before-a-failed-one"),
         ],
     )
-    def test_failed_status_requires_exactly_one_failed_sample(
+    def test_failed_status_requires_no_completed_sample(
         self, succeeded_count, failed_count, skipped_count
     ):
-        with pytest.raises(ValueError, match="exactly one failed sample"):
-            AggregationResult(
-                method="numeric_mean",
-                status=EvaluationStatus.FAILED,
-                score=None,
-                total_count=3,
-                succeeded_count=succeeded_count,
-                failed_count=failed_count,
-                skipped_count=skipped_count,
-                denominator=succeeded_count,
-                coverage=succeeded_count / 3,
+        # Completed samples give a score, in both on_sample_error modes.
+        with pytest.raises(ValueError, match="requires no completed sample"):
+            self._failed_aggregate(succeeded_count, failed_count, skipped_count)
+
+    def test_failed_status_accepts_several_failed_and_skipped_samples(self):
+        result = AggregationResult(
+            method="numeric_mean",
+            status=EvaluationStatus.FAILED,
+            score=None,
+            total_count=3,
+            succeeded_count=0,
+            failed_count=2,
+            skipped_count=1,
+            denominator=0,
+            coverage=0.0,
+        )
+
+        assert result.failed_count == 2
+
+    @staticmethod
+    def _scored_aggregate(status, succeeded_count, failed_count, skipped_count):
+        total_count = succeeded_count + failed_count + skipped_count
+        return AggregationResult(
+            method="numeric_mean",
+            status=status,
+            score=0.5,
+            total_count=total_count,
+            succeeded_count=succeeded_count,
+            failed_count=failed_count,
+            skipped_count=skipped_count,
+            denominator=succeeded_count,
+            coverage=succeeded_count / total_count,
+        )
+
+    @pytest.mark.parametrize(
+        ("succeeded_count", "failed_count", "skipped_count"),
+        [
+            pytest.param(0, 1, 1, id="none-completed"),
+            pytest.param(1, 2, 1, id="some-completed"),
+            pytest.param(3, 0, 1, id="one-skipped"),
+        ],
+    )
+    def test_completed_status_requires_every_sample_to_complete(
+        self, succeeded_count, failed_count, skipped_count
+    ):
+        with pytest.raises(ValueError, match="requires every sample to complete"):
+            self._scored_aggregate(
+                EvaluationStatus.COMPLETED, succeeded_count, failed_count, skipped_count
             )
 
-    def test_completed_status_requires_every_sample_to_succeed(self):
-        with pytest.raises(ValueError, match="every sample to succeed"):
+    @pytest.mark.parametrize(
+        ("succeeded_count", "failed_count", "skipped_count", "message"),
+        [
+            pytest.param(0, 1, 1, "requires a completed sample", id="none-completed"),
+            pytest.param(
+                3, 0, 0, "requires a sample that did not complete", id="all-completed"
+            ),
+        ],
+    )
+    def test_partial_status_requires_some_but_not_all_samples(
+        self, succeeded_count, failed_count, skipped_count, message
+    ):
+        with pytest.raises(ValueError, match=message):
+            self._scored_aggregate(
+                EvaluationStatus.PARTIAL,
+                succeeded_count,
+                failed_count,
+                skipped_count,
+            )
+
+    @pytest.mark.parametrize(
+        ("failed_count", "skipped_count"),
+        [
+            pytest.param(1, 0, id="one-failed"),
+            pytest.param(0, 1, id="one-skipped"),
+            pytest.param(2, 1, id="failed-and-skipped"),
+        ],
+    )
+    def test_partial_status_accepts_a_score_and_missing_samples(
+        self, failed_count, skipped_count
+    ):
+        result = self._scored_aggregate(
+            EvaluationStatus.PARTIAL, 1, failed_count, skipped_count
+        )
+
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.score == 0.5
+
+    def test_partial_status_cannot_lack_a_score(self):
+        with pytest.raises(TypeError, match="score must be a real number"):
             AggregationResult(
                 method="numeric_mean",
-                status=EvaluationStatus.COMPLETED,
-                score=0.5,
+                status=EvaluationStatus.PARTIAL,
+                score=None,
                 total_count=2,
                 succeeded_count=1,
                 failed_count=1,
@@ -588,6 +758,13 @@ class TestAggregationResultContracts:
                 denominator=1,
                 coverage=0.5,
             )
+
+    def test_the_status_values_are_completed_partial_and_failed(self):
+        assert [status.value for status in EvaluationStatus] == [
+            "completed",
+            "partial",
+            "failed",
+        ]
 
     def test_failed_status_cannot_contain_a_score(self):
         with pytest.raises(ValueError, match="cannot contain a score"):
@@ -656,7 +833,8 @@ class TestAggregationResultContracts:
 
     def test_numeric_aggregation_rejects_values(self):
         with pytest.raises(
-            ValueError, match="values are allowed only for a completed prf aggregation"
+            ValueError,
+            match="values are allowed only for a completed or partial prf aggregation",
         ):
             AggregationResult(
                 method="numeric_mean",
@@ -673,7 +851,7 @@ class TestAggregationResultContracts:
 
     def test_completed_prf_aggregation_requires_values(self):
         with pytest.raises(
-            ValueError, match="completed prf aggregation requires values"
+            ValueError, match="completed or partial prf aggregation requires values"
         ):
             _prf_aggregate()
 
@@ -687,7 +865,8 @@ class TestAggregationResultContracts:
 
     def test_failed_prf_aggregation_rejects_values(self):
         with pytest.raises(
-            ValueError, match="values are allowed only for a completed prf aggregation"
+            ValueError,
+            match="values are allowed only for a completed or partial prf aggregation",
         ):
             _prf_aggregate(
                 status=EvaluationStatus.FAILED,
@@ -703,6 +882,23 @@ class TestAggregationResultContracts:
         result = _prf_aggregate(score=0.5, values={"f1": 0.5})
 
         assert result.status is EvaluationStatus.COMPLETED
+
+    def test_partial_prf_aggregation_requires_values(self):
+        partial = dict(
+            status=EvaluationStatus.PARTIAL,
+            total_count=2,
+            failed_count=1,
+            coverage=0.5,
+        )
+
+        with pytest.raises(
+            ValueError, match="completed or partial prf aggregation requires values"
+        ):
+            _prf_aggregate(**partial)
+        result = _prf_aggregate(**partial, values={"f1": 0.5})
+
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.values == {"f1": 0.5}
         assert result.values == {"f1": 0.5}
         assert result.denominator == result.succeeded_count
         assert type(result.denominator) is int
@@ -844,15 +1040,14 @@ class TestWeightedMean:
         assert result.spec.weights == (1.0, 3.0)
         assert result.coverage == 1.0
 
-    def test_failure_reports_successful_weight_mass_without_score(self):
-        results = (_completed(0, 0.2), _completed(1, 0.8), _failed(2), _skipped(3))
+    def test_only_the_completed_samples_are_weighed(self):
+        results = (_completed(0, 0.2), _failed(1), _completed(2, 0.8), _skipped(3))
 
-        result = weighted_mean(results, (1.0, 3.0, 100.0, 100.0))
+        result = weighted_mean(results, (1.0, 100.0, 3.0, 100.0))
 
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.score == (0.2 * 1.0 + 0.8 * 3.0) / 4.0
         assert result.denominator == 4.0
-        assert result.coverage == 0.5
 
     def test_first_sample_failure_has_float_zero_denominator(self):
         result = weighted_mean((_failed(0), _skipped(1)), (1.0, 2.0))
@@ -927,6 +1122,24 @@ class TestMedianAndQuantile:
         for q in (0.0, 0.25, 0.5, 1.0):
             assert quantile((_completed(0, 0.7),), q).score == 0.7
 
+    def test_median_and_quantile_take_only_the_completed_scores(self):
+        results = (
+            _completed(0, 0.9),
+            _failed(1),
+            _completed(2, 0.1),
+            _completed(3, 0.5),
+        )
+
+        middle = median(results)
+        top = quantile(results, 1.0)
+
+        assert (middle.status, middle.score, middle.denominator) == (
+            EvaluationStatus.PARTIAL,
+            0.5,
+            3,
+        )
+        assert (top.status, top.score) == (EvaluationStatus.PARTIAL, 0.9)
+
 
 class TestPrfAggregators:
     """Count per-class pairs over completed samples into precision, recall and F1."""
@@ -987,20 +1200,18 @@ class TestPrfAggregators:
             assert counts["tp"] + counts["fp"] + counts["fn"] + counts["tn"] == 3
             assert counts["support"] == counts["tp"] + counts["fn"]
 
-    def test_failure_reports_the_numeric_mean_counts_without_values(self):
-        samples = (
-            _match_sample(0, 1.0, {"a": TP}),
-            _failed(1),
-            _skipped(2),
-        )
+    def test_no_completed_sample_reports_the_numeric_mean_counts_without_values(
+        self,
+    ):
+        samples = (_failed(0), _failed(1), _skipped(2))
 
-        result = prf(samples)
+        result = aggregate(samples, AggregationSpec(method="prf"))
 
         assert result.status is EvaluationStatus.FAILED
         assert result.score is None
         assert result.values is None
         baseline = numeric_mean(samples)
-        _assert_counts(result, total=3, succeeded=1, failed=1, skipped=1)
+        _assert_counts(result, total=3, succeeded=0, failed=2, skipped=1)
         assert (result.succeeded_count, result.failed_count, result.skipped_count) == (
             baseline.succeeded_count,
             baseline.failed_count,
@@ -1008,6 +1219,23 @@ class TestPrfAggregators:
         )
         assert result.denominator == baseline.denominator
         assert result.coverage == baseline.coverage
+
+    def test_only_the_completed_samples_count(self):
+        samples = (
+            _match_sample(0, 1.0, {"a": TP}),
+            _failed(1),
+            _match_sample(2, 0.0, {"c": FP, "d": FN}),
+        )
+
+        result = prf(samples)
+
+        assert result.status is EvaluationStatus.PARTIAL
+        per_class = result.values["per_class"]
+        assert list(per_class) == ["a", "c", "d"]
+        # The failed sample is neither a true negative nor any other count.
+        assert [counts["tn"] for counts in per_class.values()] == [1, 1, 1]
+        assert result.score == pytest.approx(1 / 3)
+        _assert_counts(result, total=3, succeeded=2, failed=1, skipped=0)
 
     def test_completed_sample_without_matches_is_rejected(self):
         samples = (_completed(0, 1.0), _completed(1, 0.0))

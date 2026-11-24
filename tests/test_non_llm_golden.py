@@ -184,7 +184,8 @@ def _build_snapshot():
                         # sample was scored (an undeclared modality, a count).
                         excluded[key] = {"failed_ordinal": None, "error": str(error)}
                         continue
-                    if result.status.value == "completed":
+                    # A completed or partial metric has a score.
+                    if result.status.value != "failed":
                         results[key] = _snapshot(result)
                     else:
                         failed = next(

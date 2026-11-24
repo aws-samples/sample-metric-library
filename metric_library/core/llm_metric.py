@@ -313,9 +313,10 @@ class LLMMetric(Metric):
             response, part_count=len(sample.predictions)
         )
         if "part_scores_error" in result.details:
+            # The record's position from 1, as the engine's lines name it.
             logger.warning(
-                "Sample %s of %s: %s; the overall score is kept",
-                sample.sample_id,
+                "Record %d of %s: %s; the overall score is kept",
+                sample.ordinal + 1,
                 self.name,
                 result.details["part_scores_error"],
             )

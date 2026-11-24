@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from metric_library.core.aggregation import (
+    AggregationResult,
     EvaluationStatus,
     SampleStatus,
 )
@@ -41,9 +42,12 @@ from metric_library.core.data_handler import DataHandler
 from metric_library.core.evaluation import (
     DEFAULT_MAX_WORKERS,
     MAX_WORKERS_LIMIT,
+    THROTTLED_CATEGORY,
     EvaluationConfiguration,
     MetricEvaluationResult,
+    _failure_categories,
     _safe_error,
+    _scoring_workers,
 )
 from metric_library.core.llm_metric import LLMBatchMetric, LLMMetric
 from metric_library.core.matching import LabelSet, ListItems, WholeValue
@@ -296,26 +300,134 @@ def _validate_auxiliary_cardinality(predictions, prompts, context):
 def _envelope_value(
     result: MetricEvaluationResult | MetricError,
     record_ids: list[str],
+    on_sample_error: str,
+    advice: str | None = None,
 ) -> float | dict | MetricError:
-    """Map one engine result to the envelope value.
+    """Map one engine result to its ``data.results`` value.
 
     A completed result maps to its aggregate ``values`` object when the
     aggregator provides one (the ``prf`` aggregator), else to its finite
-    float score. A failed sample is reported as a MetricError under the record
-    identifier at its ordinal.
+    float score, so every value that is not an error is a score over every
+    sample. Any other result maps to a MetricError; ``data.partial_results``
+    holds the score of a partial one (``_partial_value``). The error gives the
+    failure counts, with the coverage of a partial result, then the failed
+    samples by error category, the ``advice``, if any, and last the first
+    failed sample, by the record identifier at its ordinal, with its message:
+    ``no sample completed: <counts>; <categories>; sample <id>: <message>``
+    for a failed result. With ``stop``, a failed result, whose first sample
+    failed, gives only ``sample <id>: <message>``.
     """
     if isinstance(result, MetricError):
         return result
-    if result.status is EvaluationStatus.FAILED:
-        failed_sample = next(
-            sample for sample in result.samples if sample.status is SampleStatus.FAILED
-        )
-        return MetricError(
-            f"sample {record_ids[failed_sample.ordinal]}: {failed_sample.error}"
-        )
+    if result.status is EvaluationStatus.COMPLETED:
+        if result.aggregate.values is not None:
+            return result.aggregate.values
+        return result.score
+    # Only a failed sample stops the scoring, so a result that left samples
+    # out has one.
+    failed_sample = next(
+        sample for sample in result.samples if sample.status is SampleStatus.FAILED
+    )
+    failure = f"sample {record_ids[failed_sample.ordinal]}: {failed_sample.error}"
+    failed = result.status is EvaluationStatus.FAILED
+    if failed and on_sample_error == "stop":
+        return MetricError(failure)
+    counts = _failure_counts(result.aggregate)
+    if not failed:
+        counts = f"{counts} (coverage {_coverage_text(result.aggregate)})"
+    parts = [counts, _failure_categories(result.samples)]
+    if advice is not None:
+        parts.append(advice)
+    parts.append(failure)
+    summary = "; ".join(parts)
+    return MetricError(f"no sample completed: {summary}" if failed else summary)
+
+
+def _partial_value(result: MetricEvaluationResult) -> float | dict:
+    """The ``data.partial_results`` value of a partial result.
+
+    It has the shape of a ``data.results`` value: the aggregate ``values``
+    object of a ``prf`` aggregate, else the score of the completed samples.
+    """
     if result.aggregate.values is not None:
         return result.aggregate.values
-    return result.score
+    return result.partial_score
+
+
+def _coverage_entry(aggregate: AggregationResult) -> dict:
+    """The ``data.coverage`` entry of one metric."""
+    return {
+        "succeeded": aggregate.succeeded_count,
+        "failed": aggregate.failed_count,
+        "skipped": aggregate.skipped_count,
+        "coverage": aggregate.coverage,
+    }
+
+
+def _coverage_text(aggregate: AggregationResult) -> str:
+    """The coverage rounded down to 3 decimals, but never 0 for a coverage above 0.
+
+    Rounding down keeps a coverage below 1 from reading as 1, and ``<0.001``
+    replaces the 0 that a coverage above 0 would round down to.
+    """
+    thousandths = aggregate.succeeded_count * 1000 // aggregate.total_count
+    if thousandths == 0 and aggregate.succeeded_count:
+        return "<0.001"
+    return f"{thousandths / 1000:g}"
+
+
+def _failure_counts(aggregate: AggregationResult) -> str:
+    """For example ``12 of 1000 samples failed and 6 were skipped``."""
+    text = f"{aggregate.failed_count} of {aggregate.total_count} samples failed"
+    skipped = aggregate.skipped_count
+    if skipped:
+        text += f" and {skipped} {'was' if skipped == 1 else 'were'} skipped"
+    return text
+
+
+def _throttling_advice(throttled: int, failed: int, workers: int) -> str | None:
+    """Advise fewer workers for a metric whose failed samples Bedrock throttled.
+
+    ``throttled`` of the ``failed`` samples failed with ``THROTTLED_CATEGORY``
+    while ``workers`` samples were scored at the same time. A metric scored one
+    sample at a time gets no advice, and nor does one without such a sample.
+    """
+    if throttled == 0 or workers < 2:
+        return None
+    if throttled < failed:
+        subject = f"{throttled} of the {failed} failed samples"
+    elif failed == 1:
+        subject = "the failed sample"
+    else:
+        subject = "every failed sample"
+    return (
+        f"Bedrock throttled {subject}, so run again with max_workers "
+        f"(--max-workers) below {workers} or raise the model's quota"
+    )
+
+
+def _metric_throttling_advice(
+    name: str,
+    result: MetricEvaluationResult | MetricError,
+    on_sample_error: str,
+    max_workers: int,
+) -> str | None:
+    """The advice to lower --max-workers for a metric that Bedrock throttled.
+
+    Only with ``continue``, so that a ``stop`` error stays
+    ``sample <id>: <message>``. The metric's class gives its ``thread_safe``,
+    so the advice names the number of samples that were scored at a time.
+    """
+    if on_sample_error != "continue" or not isinstance(result, MetricEvaluationResult):
+        return None
+    metric_class = MetricRegistry.metrics.get(normalize_metric_name(name))
+    if metric_class is None:
+        return None
+    throttled = sum(
+        sample.error_category == THROTTLED_CATEGORY for sample in result.samples
+    )
+    workers = _scoring_workers(metric_class, max_workers, len(result.samples))
+    return _throttling_advice(throttled, result.aggregate.failed_count, workers)
 
 
 def _sample_entries(
@@ -346,6 +458,7 @@ def _sample_entries(
             "status": sample.status.value,
             "score": sample.score,
             "error": sample.error,
+            "error_category": sample.error_category,
             "matches": matches,
             "item_scores": details.get("item_scores"),
             "reasoning": None if omit_reasoning else details.get("reasoning"),
@@ -781,6 +894,21 @@ def main():
             f"it when Bedrock throttles the run. Omitted: {DEFAULT_MAX_WORKERS}."
         ),
     )
+    parser.add_argument(
+        "--on-sample-error",
+        choices=("continue", "stop"),
+        default="continue",
+        help=(
+            "What a sample that still fails after its retries does. continue: "
+            "the other samples are scored, and the metric gets the score of its "
+            "completed samples in data.partial_results, or fails when none "
+            "completed; it stops early only on an error that every later "
+            "sample would hit too, such as expired credentials or a wrong "
+            "--model-id. stop: the first failed sample stops its metric, which "
+            "gets the score of the samples before it in data.partial_results, "
+            "or fails when there are none. Omitted: continue."
+        ),
+    )
     args = parser.parse_args()
 
     if args.list_metrics:
@@ -938,7 +1066,7 @@ def main():
         }
         # One configuration per distinct (method, matcher) entry, in first-seen
         # order. An entry without a method keeps the metric's default, and
-        # every entry carries --max-workers.
+        # every entry carries --max-workers and the sample error options.
         entries = list(zip(methods, matchers))
         configurations: dict[tuple, EvaluationConfiguration] = {}
         for method, matcher in dict.fromkeys(entries):
@@ -949,6 +1077,7 @@ def main():
                 thresholds=thresholds if method == "prf" else None,
                 matcher=matcher_objects[matcher],
                 max_workers=args.max_workers,
+                on_sample_error=args.on_sample_error,
             )
         meta["metrics"] = {
             name: _metric_meta(name, method, matcher, args, thresholds)
@@ -982,19 +1111,53 @@ def main():
             for name, value in results.items()
             if isinstance(value, MetricEvaluationResult)
         }
-        results = {
-            name: _envelope_value(value, record_ids) for name, value in results.items()
+        coverage = {
+            name: _coverage_entry(value.aggregate)
+            for name, value in results.items()
+            if isinstance(value, MetricEvaluationResult)
         }
-        metric_errors = [
-            f"{metric_name}: {result['error']}"
-            for metric_name, result in results.items()
-            if isinstance(result, MetricError)
-        ]
-        success_count = len(results) - len(metric_errors)
-        if not metric_errors:
+        # data.results holds only scores over every sample: one error per
+        # metric without a score, and one per metric whose score leaves out
+        # samples that did not complete. data.partial_results holds the score
+        # of each such partial metric.
+        values = {}
+        partial_values = {}
+        metric_errors = []
+        for name, result in results.items():
+            advice = _metric_throttling_advice(
+                name, result, args.on_sample_error, args.max_workers
+            )
+            values[name] = _envelope_value(
+                result, record_ids, args.on_sample_error, advice
+            )
+            if isinstance(values[name], MetricError):
+                metric_errors.append(f"{name}: {values[name]['error']}")
+            if (
+                isinstance(result, MetricEvaluationResult)
+                and result.status is EvaluationStatus.PARTIAL
+            ):
+                partial_values[name] = _partial_value(result)
+        # The status of each metric: completed, partial or failed. A metric
+        # that raised before scoring, or whose samples all failed, is failed.
+        metric_statuses = {
+            name: (
+                EvaluationStatus.FAILED.value
+                if isinstance(result, MetricError)
+                else result.status.value
+            )
+            for name, result in results.items()
+        }
+        # The run is completed when every metric is, failed when none has a
+        # score, and partial otherwise.
+        if all(
+            value == EvaluationStatus.COMPLETED.value
+            for value in metric_statuses.values()
+        ):
             status = "completed"
             exit_code = 0
-        elif success_count:
+        elif any(
+            value != EvaluationStatus.FAILED.value for value in metric_statuses.values()
+        ):
             status = "partial"
             exit_code = 2
         else:
@@ -1004,7 +1167,13 @@ def main():
         output = {
             "ok": status == "completed",
             "status": status,
-            "data": {"results": results, "samples": samples},
+            "data": {
+                "results": values,
+                "partial_results": partial_values,
+                "status": metric_statuses,
+                "coverage": coverage,
+                "samples": samples,
+            },
             "errors": metric_errors,
             "meta": meta,
         }

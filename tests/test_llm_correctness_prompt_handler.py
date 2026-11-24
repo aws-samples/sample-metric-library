@@ -51,6 +51,8 @@ def _forbid_live_aws(monkeypatch):
 # checks which answer each sample got, or the order of the calls, scores one
 # sample at a time.
 SEQUENTIAL = EvaluationConfiguration(max_workers=1)
+# A test of the fail-fast shape: the first failed sample stops the metric.
+SEQUENTIAL_STOP = EvaluationConfiguration(max_workers=1, on_sample_error="stop")
 
 
 # The default judge role ``LLMMetric.role`` returns. Every request sends it as
@@ -558,9 +560,9 @@ class TestInputRejection:
 class TestJudgeFailures:
     """Invalid responses and provider errors end each path at the failing call.
 
-    The engine records the failing sample with the validator's or provider's
-    own message, skips every later sample and reports a failed aggregate with
-    no score; ``compute`` raises the error itself.
+    With ``on_sample_error="stop"``, the engine records the failing sample with
+    the validator's or provider's own message, skips every later sample and
+    scores the earlier samples; ``compute`` raises the error itself.
     """
 
     def test_blank_reasoning_on_second_of_three_fails_that_sample_and_skips_the_rest(
@@ -582,12 +584,12 @@ class TestJudgeFailures:
             references,
             context,
             prompts,
-            configuration=SEQUENTIAL,
+            configuration=SEQUENTIAL_STOP,
             client_factory=factory,
         )
 
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.partial_score == 0.2
         assert _statuses(result) == (
             SampleStatus.COMPLETED,
             SampleStatus.FAILED,
@@ -616,12 +618,12 @@ class TestJudgeFailures:
             references,
             context,
             prompts,
-            configuration=SEQUENTIAL,
+            configuration=SEQUENTIAL_STOP,
             client_factory=factory,
         )
 
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.partial_score == 0.2
         assert _statuses(result) == (
             SampleStatus.COMPLETED,
             SampleStatus.FAILED,
@@ -753,8 +755,9 @@ class TestOtherMetricsShareTheComposition:
             client_factory=factory,
         )
 
-        assert result.status is EvaluationStatus.FAILED
-        assert result.score is None
+        # The completed sample gives the score; the failed one keeps its error.
+        assert result.status is EvaluationStatus.PARTIAL
+        assert result.partial_score == 0.2
         assert _statuses(result) == (SampleStatus.COMPLETED, SampleStatus.FAILED)
         assert result.samples[0].score == 0.2
         assert "LLM judge score must be between 0.0 and 1.0" in result.samples[1].error
@@ -1277,8 +1280,8 @@ class TestMultiPartRoles:
         }
         assert result.samples[1].details["item_scores"] == [1.0, 0.8]
         assert client.query.call_count == 2
-        first_id = result.samples[0].sample_id
-        assert f"Sample {first_id} of LLMCorrectness: {message}" in caplog.text
+        # The log names the record by its position from 1.
+        assert f"Record 1 of LLMCorrectness: {message}" in caplog.text
 
     def test_one_part_candidate_ignores_no_part_scores_and_stays_a_float(self):
         metric = MetricRegistry.get_metric("LLMCorrectness")
