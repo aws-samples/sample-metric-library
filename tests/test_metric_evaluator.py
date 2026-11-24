@@ -2799,6 +2799,27 @@ class TestContinueOnSampleError:
                 False,
                 id="validation-image-too-large",
             ),
+            # A message that only quotes a wrong model ID message, as one that
+            # repeats the text of a sample can, fails only its own sample.
+            pytest.param(
+                lambda: _client_error(
+                    "ValidationException",
+                    "The input text says: The provided model identifier is "
+                    "invalid. Remove that quoted sentence.",
+                ),
+                False,
+                id="validation-quoting-the-unknown-model-id-message",
+            ),
+            pytest.param(
+                lambda: _client_error(
+                    "ValidationException",
+                    "1 validation error detected: Value 'Invocation of model ID x "
+                    "with on-demand throughput isn't supported.' at 'text' failed "
+                    "to satisfy constraint",
+                ),
+                False,
+                id="validation-quoting-the-base-model-id-message",
+            ),
             pytest.param(
                 lambda: _client_error("ModelErrorException"), False, id="model"
             ),
@@ -2885,11 +2906,10 @@ class TestContinueOnSampleError:
         assert set(evaluation._FATAL_EXCEPTIONS) == {
             error_type for error_type, _ in _FATAL_EXCEPTIONS
         }
-        # The README quotes these parts of the messages of a wrong model ID.
-        assert evaluation._FATAL_VALIDATION_MESSAGES == (
-            "The provided model identifier is invalid",
-            "with on-demand throughput isn",
-        )
+        # The README quotes the messages of a wrong model ID; each one, as
+        # Bedrock or its documentation writes it, is the whole message.
+        for message in _MODEL_ID_VALIDATION_MESSAGES.values():
+            assert evaluation._is_fatal(_client_error("ValidationException", message))
 
     def test_a_stop_before_any_completed_sample_fails_the_metric(self, monkeypatch):
         outcomes = [_client_error("AccessDeniedException")] + [0.5] * 9

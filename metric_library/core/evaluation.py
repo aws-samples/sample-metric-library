@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import threading
 import time
 from collections import Counter
@@ -1181,8 +1182,8 @@ _TRANSIENT_TRANSPORT_EXCEPTIONS = (
 # the access to the model or the model itself is wrong, which no retry and no
 # other sample fixes. With on_sample_error="continue", the first one stops the
 # metric. A ValidationException is not here, as one sample can cause it, such
-# as one longer than the model's context window; only the messages in
-# _FATAL_VALIDATION_MESSAGES make it fatal.
+# as one longer than the model's context window; only the messages that
+# _FATAL_VALIDATION_MESSAGES match make it fatal.
 _FATAL_CLIENT_ERROR_CODES = frozenset(
     {
         "ExpiredTokenException",
@@ -1208,14 +1209,19 @@ _FATAL_EXCEPTIONS = (
     SSOTokenLoadError,
     TokenRetrievalError,
 )
-# Parts of the ValidationException messages that the model ID causes, so that
-# every later sample gets them too: an ID that names no model or inference
-# profile, and the ID of a base model that only an inference profile can call.
-# Each part ends before an apostrophe, which Bedrock writes as ’ and its
-# documentation as '. The match ignores case.
+# The ValidationException messages that the model ID causes, so that every
+# later sample gets them too: an ID that names no model or inference profile,
+# and the ID of a base model that only an inference profile can call. A
+# pattern matches the whole message, from its start, so that a message that
+# only quotes one, such as an error that repeats the text of a sample, fails
+# only its own sample. Bedrock writes the apostrophe of "isn't" as ’ and its
+# documentation as '. The match ignores case and surrounding spaces.
 _FATAL_VALIDATION_MESSAGES = (
-    "The provided model identifier is invalid",
-    "with on-demand throughput isn",
+    re.compile(r"the provided model identifier is invalid\.?"),
+    re.compile(
+        r"invocation of model id \S+ with on-demand throughput isn[’']t supported\b.*",
+        re.DOTALL,
+    ),
 )
 
 
@@ -1226,8 +1232,8 @@ def _is_fatal(error: Exception) -> bool:
     code = _safe_client_error_code(error)
     if code == "ValidationException":
         # Only matched, never logged: a message can quote dataset content.
-        message = (_safe_client_error_field(error, "Message") or "").casefold()
-        return any(part.casefold() in message for part in _FATAL_VALIDATION_MESSAGES)
+        message = (_safe_client_error_field(error, "Message") or "").strip().casefold()
+        return any(pattern.fullmatch(message) for pattern in _FATAL_VALIDATION_MESSAGES)
     return code in _FATAL_CLIENT_ERROR_CODES
 
 

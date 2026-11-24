@@ -307,7 +307,8 @@ shows the same envelope without `data.samples` and with `output_path`:
   entry becomes the same error. When none completed, the metric result
   becomes `{"error": "no sample completed: ...; sample <id>: <message>"}`.
   A sample that failed with an error that the engine retries, such as a
-  throttled call, is scored once more at the end, one at a time. An error
+  throttled call, is scored again at the end, one at a time and with its
+  retries, until one fails again. An error
   that every later sample would hit too, such as expired credentials or a
   wrong `--model-id`, stops
   the metric, and the samples it stopped before are `skipped`. With
