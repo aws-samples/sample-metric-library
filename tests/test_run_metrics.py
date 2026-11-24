@@ -24,6 +24,7 @@ import threading
 import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -357,7 +358,15 @@ class TestEndToEnd:
         )
         assert result.returncode == 0, result.stderr
         output = _full_output(result, output_path)
-        assert set(output["data"]) == {"results", "status", "coverage", "samples"}
+        assert set(output["data"]) == {
+            "results",
+            "partial_results",
+            "status",
+            "coverage",
+            "samples",
+        }
+        # No metric left samples out, so no metric has a partial score.
+        assert output["data"]["partial_results"] == {}
         assert set(output["data"]["samples"]) == set(output["data"]["results"])
         assert output["data"]["status"] == {
             "Accuracy": "completed",
@@ -1267,7 +1276,7 @@ class TestEndToEnd:
         # Every sample fails, so no completed sample gives a score; the
         # message names the first failed sample.
         message = (
-            "no sample completed: 3 of 3 samples failed; "
+            "no sample completed: 3 of 3 samples failed; exception:ValueError 3; "
             "sample r-a: score must be finite"
         )
         assert output["data"]["results"] == {"ReturnsNaN": {"error": message}}
@@ -1496,8 +1505,8 @@ class TestEndToEnd:
         assert output["data"]["results"]["Accuracy"] == 0.5
         assert output["data"]["results"]["LLMCorrectness"] == {
             "error": "no sample completed: 1 of 2 samples failed and 1 was "
-            "skipped; sample 1: The config profile (no-such-profile) could not be "
-            "found"
+            "skipped; exception:ProfileNotFound 1; sample 1: The config profile "
+            "(no-such-profile) could not be found"
         }
         entries = output["data"]["samples"]["LLMCorrectness"]
         assert [entry["status"] for entry in entries] == ["failed", "skipped"]
@@ -3670,14 +3679,25 @@ class TestStdoutOption:
         printed = json.loads(result.stdout)
         assert set(printed) == STDOUT_KEYS
         assert printed["output_path"] == str(output_path)
-        assert set(printed["data"]) == {"results", "status", "coverage"}
+        assert set(printed["data"]) == {
+            "results",
+            "partial_results",
+            "status",
+            "coverage",
+        }
         assert printed["data"]["results"] == {
             "Accuracy": pytest.approx(2 / 3),
             "TextExactMatch": pytest.approx(2 / 3),
         }
         full = json.loads(output_path.read_text())
         assert set(full) == ENVELOPE_KEYS
-        assert set(full["data"]) == {"results", "status", "coverage", "samples"}
+        assert set(full["data"]) == {
+            "results",
+            "partial_results",
+            "status",
+            "coverage",
+            "samples",
+        }
         assert len(full["data"]["samples"]["Accuracy"]) == 3
         assert printed == _summary_of(full, output_path)
 
@@ -5058,15 +5078,13 @@ class TestOnSampleErrorOption:
         records_path = tmp_path / "records.json"
         output_path = tmp_path / "result.json"
 
-        def run(*options, bad=(4,), metrics="FailsOnBad"):
-            records_path.write_text(
-                json.dumps(
-                    [
-                        {"pred": "bad" if index in bad else f"p{index}", "gold": "g"}
-                        for index in range(1, 11)
-                    ]
-                )
-            )
+        def run(*options, bad=(4,), metrics="FailsOnBad", records=None):
+            if records is None:
+                records = [
+                    {"pred": "bad" if index in bad else f"p{index}", "gold": "g"}
+                    for index in range(1, 11)
+                ]
+            records_path.write_text(json.dumps(records))
             result = _run_evaluation(
                 records_path,
                 output_path,
@@ -5086,13 +5104,24 @@ class TestOnSampleErrorOption:
         output = _full_output(result, output_path)
         assert output["ok"] is False
         assert output["status"] == "partial"
-        # The score of the 9 completed samples; the failed one does not count.
-        assert output["data"]["results"] == {"FailsOnBad": 1.0}
+        # data.results holds only scores over every record, so the metric is
+        # an error there, and the score of the 9 completed samples, which
+        # leaves out the failed one, is in data.partial_results.
+        assert output["data"]["results"] == {
+            "FailsOnBad": {
+                "error": "1 of 10 samples failed (coverage 0.9); "
+                "exception:ValueError 1; sample 4: bad record"
+            }
+        }
+        assert output["data"]["partial_results"] == {"FailsOnBad": 1.0}
         assert output["data"]["status"] == {"FailsOnBad": "partial"}
         assert output["data"]["coverage"] == {
             "FailsOnBad": {"succeeded": 9, "failed": 1, "skipped": 0, "coverage": 0.9}
         }
-        assert output["errors"] == ["FailsOnBad: 1 of 10 samples failed (coverage 0.9)"]
+        assert output["errors"] == [
+            "FailsOnBad: 1 of 10 samples failed (coverage 0.9); "
+            "exception:ValueError 1; sample 4: bad record"
+        ]
         entry = output["data"]["samples"]["FailsOnBad"][3]
         assert (entry["sample_id"], entry["status"], entry["error"]) == (
             "4",
@@ -5108,8 +5137,17 @@ class TestOnSampleErrorOption:
         assert result.returncode == 2, result.stderr
         output = _full_output(result, output_path)
         assert output["status"] == "partial"
-        assert output["data"]["results"] == {"FailsOnBad": 1.0}
-        assert output["errors"] == ["FailsOnBad: 7 of 10 samples failed (coverage 0.3)"]
+        assert output["data"]["results"] == {
+            "FailsOnBad": {
+                "error": "7 of 10 samples failed (coverage 0.3); "
+                "exception:ValueError 7; sample 1: bad record"
+            }
+        }
+        assert output["data"]["partial_results"] == {"FailsOnBad": 1.0}
+        assert output["errors"] == [
+            "FailsOnBad: 7 of 10 samples failed (coverage 0.3); "
+            "exception:ValueError 7; sample 1: bad record"
+        ]
         assert output["data"]["coverage"]["FailsOnBad"] == {
             "succeeded": 3,
             "failed": 7,
@@ -5117,14 +5155,79 @@ class TestOnSampleErrorOption:
             "coverage": 0.3,
         }
 
+    def test_a_partial_prf_metric_has_its_object_in_partial_results(self, run):
+        # Each record pairs label a with a, except the last, whose pair fails.
+        records = [{"pred": "a", "gold": "a"}] * 3 + [{"pred": "bad", "gold": "bad"}]
+        result, output_path = run(
+            "--aggregation-methods", "prf", "--matcher", "labels", records=records
+        )
+
+        assert result.returncode == 2, result.stderr
+        output = _full_output(result, output_path)
+        assert output["data"]["status"] == {"FailsOnBad": "partial"}
+        assert output["data"]["results"] == {
+            "FailsOnBad": {
+                "error": "1 of 4 samples failed (coverage 0.75); "
+                "exception:ValueError 1; sample 4: bad record"
+            }
+        }
+        # The precision-recall-F1 object of the completed samples, in the
+        # shape that data.results gives a completed prf metric.
+        partial = output["data"]["partial_results"]["FailsOnBad"]
+        assert list(partial) == ["threshold", "precision", "recall", "f1", "per_class"]
+        assert (partial["precision"], partial["recall"], partial["f1"]) == (
+            1.0,
+            1.0,
+            1.0,
+        )
+        assert list(partial["per_class"]) == ["a"]
+
+    def test_the_error_names_the_first_failed_record_by_its_identifier(self, run):
+        records = [
+            {"id": f"rec-{index}", "pred": "bad" if index > 5 else "p", "gold": "g"}
+            for index in range(1, 11)
+        ]
+
+        result, output_path = run("--sample-id-key", "id", records=records)
+
+        assert result.returncode == 2, result.stderr
+        output = _full_output(result, output_path)
+        assert output["errors"] == [
+            "FailsOnBad: 5 of 10 samples failed (coverage 0.5); "
+            "exception:ValueError 5; sample rec-6: bad record"
+        ]
+        # The log names the record by its position from 1.
+        assert "Record 6 of FailsOnBad failed with exception:ValueError" in (
+            result.stderr
+        )
+
+    @pytest.mark.parametrize(
+        ("succeeded", "total", "text"),
+        [
+            pytest.param(1, 3000, "<0.001", id="above-0-below-0.001"),
+            pytest.param(3, 1000, "0.003", id="thousandths"),
+            pytest.param(1, 2, "0.5", id="half"),
+            pytest.param(2999, 3000, "0.999", id="below-1"),
+        ],
+    )
+    def test_the_coverage_text_reads_as_neither_0_nor_1(self, succeeded, total, text):
+        from metric_library.run_metrics import _coverage_text
+
+        aggregate = SimpleNamespace(succeeded_count=succeeded, total_count=total)
+        assert _coverage_text(aggregate) == text
+
     def test_a_metric_without_a_completed_sample_fails(self, run):
         result, output_path = run(bad=range(1, 11))
 
         assert result.returncode == 1, result.stderr
         output = _full_output(result, output_path)
         assert output["status"] == "failed"
-        message = "no sample completed: 10 of 10 samples failed; sample 1: bad record"
+        message = (
+            "no sample completed: 10 of 10 samples failed; "
+            "exception:ValueError 10; sample 1: bad record"
+        )
         assert output["data"]["results"] == {"FailsOnBad": {"error": message}}
+        assert output["data"]["partial_results"] == {}
         assert output["data"]["status"] == {"FailsOnBad": "failed"}
         assert output["errors"] == [f"FailsOnBad: {message}"]
         entries = output["data"]["samples"]["FailsOnBad"]
@@ -5137,11 +5240,14 @@ class TestOnSampleErrorOption:
         assert result.returncode == 2, result.stderr
         output = _full_output(result, output_path)
         assert output["status"] == "partial"
-        assert output["data"]["results"] == {"FailsOnBad": 1.0}
+        message = (
+            "1 of 10 samples failed and 6 were skipped (coverage 0.3); "
+            "exception:ValueError 1; sample 4: bad record"
+        )
+        assert output["data"]["results"] == {"FailsOnBad": {"error": message}}
+        assert output["data"]["partial_results"] == {"FailsOnBad": 1.0}
         assert output["data"]["status"] == {"FailsOnBad": "partial"}
-        assert output["errors"] == [
-            "FailsOnBad: 1 of 10 samples failed and 6 were skipped (coverage 0.3)"
-        ]
+        assert output["errors"] == [f"FailsOnBad: {message}"]
         entries = output["data"]["samples"]["FailsOnBad"]
         assert [entry["status"] for entry in entries] == (
             ["completed"] * 3 + ["failed"] + ["skipped"] * 6
@@ -5156,6 +5262,7 @@ class TestOnSampleErrorOption:
         assert output["data"]["results"] == {
             "FailsOnBad": {"error": "sample 1: bad record"}
         }
+        assert output["data"]["partial_results"] == {}
         assert output["data"]["status"] == {"FailsOnBad": "failed"}
         assert output["errors"] == ["FailsOnBad: sample 1: bad record"]
         entries = output["data"]["samples"]["FailsOnBad"]
@@ -5202,6 +5309,19 @@ class TestOnSampleErrorOption:
         assert set(output["data"]["coverage"]) == {
             name for name in statuses if name != "LLMCorrectness"
         }
+        # Only a partial metric has a partial score, and only a completed one
+        # a score in data.results.
+        assert set(output["data"]["partial_results"]) == {
+            name for name, status in statuses.items() if status == "partial"
+        }
+        scored = {
+            name
+            for name, value in output["data"]["results"].items()
+            if not (isinstance(value, dict) and "error" in value)
+        }
+        assert scored == {
+            name for name, status in statuses.items() if status == "completed"
+        }
 
     def test_the_run_fails_when_every_metric_fails(self, run):
         result, output_path = run(metrics="FailsOnBad,LLMCorrectness", bad=range(1, 11))
@@ -5228,6 +5348,12 @@ class TestThrottlingAdvice:
     Only with ``--on-sample-error continue``, and only for a metric whose
     samples were scored more than one at a time.
     """
+
+    # The message of a sample that the fixture metric throttles.
+    THROTTLED = (
+        "An error occurred (ThrottlingException) when calling the Converse "
+        "operation: Too many requests"
+    )
 
     @pytest.fixture
     def run(self, tmp_path):
@@ -5299,31 +5425,34 @@ class TestThrottlingAdvice:
                 [],
                 True,
                 "; Bedrock throttled the failed sample, so run again with "
-                "max_workers (--max-workers) below 4",
+                "max_workers (--max-workers) below 4 or raise the model's quota",
                 id="default",
             ),
             pytest.param(
                 ["--max-workers", "2"],
                 True,
                 "; Bedrock throttled the failed sample, so run again with "
-                "max_workers (--max-workers) below 2",
+                "max_workers (--max-workers) below 2 or raise the model's quota",
                 id="two",
             ),
             pytest.param(["--max-workers", "1"], True, "", id="one"),
             pytest.param([], False, "", id="not-thread-safe"),
         ],
     )
-    def test_a_completed_metric_advises_fewer_workers(
+    def test_a_partial_metric_advises_fewer_workers(
         self, run, options, thread_safe, advice
     ):
         result, output_path = run({4: "busy"}, *options, thread_safe=thread_safe)
 
         assert result.returncode == 2, result.stderr
         output = _full_output(result, output_path)
-        assert output["data"]["results"] == {"Throttled": 1.0}
-        assert output["errors"] == [
-            f"Throttled: 1 of 10 samples failed (coverage 0.9){advice}"
-        ]
+        message = (
+            f"1 of 10 samples failed (coverage 0.9); bedrock:ThrottlingException 1"
+            f"{advice}; sample 4: {self.THROTTLED}"
+        )
+        assert output["data"]["results"] == {"Throttled": {"error": message}}
+        assert output["data"]["partial_results"] == {"Throttled": 1.0}
+        assert output["errors"] == [f"Throttled: {message}"]
         entry = output["data"]["samples"]["Throttled"][3]
         assert entry["error_category"] == "bedrock:ThrottlingException"
 
@@ -5332,9 +5461,11 @@ class TestThrottlingAdvice:
 
         assert result.returncode == 2, result.stderr
         assert _full_output(result, output_path)["errors"] == [
-            "Throttled: 2 of 10 samples failed (coverage 0.8); Bedrock throttled "
-            "1 of the 2 failed samples, so run again with max_workers "
-            "(--max-workers) below 4"
+            "Throttled: 2 of 10 samples failed (coverage 0.8); "
+            "bedrock:ThrottlingException 1, exception:ValueError 1; Bedrock "
+            "throttled 1 of the 2 failed samples, so run again with max_workers "
+            f"(--max-workers) below 4 or raise the model's quota; sample 4: "
+            f"{self.THROTTLED}"
         ]
 
     def test_a_failed_metric_gives_the_advice_before_its_failed_sample(self, run):
@@ -5344,10 +5475,10 @@ class TestThrottlingAdvice:
         assert result.returncode == 1, result.stderr
         output = _full_output(result, output_path)
         message = (
-            "no sample completed: 10 of 10 samples failed; Bedrock throttled "
-            "every failed sample, so run again with max_workers (--max-workers) "
-            "below 4; sample 1: An error occurred (ThrottlingException) when "
-            "calling the Converse operation: Too many requests"
+            "no sample completed: 10 of 10 samples failed; "
+            "bedrock:ThrottlingException 10; Bedrock throttled every failed "
+            "sample, so run again with max_workers (--max-workers) below 4 or "
+            f"raise the model's quota; sample 1: {self.THROTTLED}"
         )
         assert output["data"]["results"] == {"Throttled": {"error": message}}
         assert output["errors"] == [f"Throttled: {message}"]
@@ -5358,7 +5489,10 @@ class TestThrottlingAdvice:
             pytest.param(
                 {4: "busy"},
                 2,
-                "Throttled: 1 of 10 samples failed and 6 were skipped (coverage 0.3)",
+                "Throttled: 1 of 10 samples failed and 6 were skipped (coverage "
+                "0.3); bedrock:ThrottlingException 1; sample 4: An error occurred "
+                "(ThrottlingException) when calling the Converse operation: Too "
+                "many requests",
                 id="scored-records-before",
             ),
             pytest.param(

@@ -258,8 +258,9 @@ class MetricRegistry(metaclass=MetricRegistryMeta):
     ) -> dict[str, MetricEvaluationResult | MetricError]:
         """Evaluate several metrics by name with one shared configuration.
 
-        Each value is the metric's ``MetricEvaluationResult``, COMPLETED or
-        FAILED, or a ``MetricError`` when ``compute_metric`` raised for that name.
+        Each value is the metric's ``MetricEvaluationResult``, COMPLETED,
+        PARTIAL or FAILED, or a ``MetricError`` when ``compute_metric`` raised
+        for that name.
         """
         results: dict[str, MetricEvaluationResult | MetricError] = {}
 

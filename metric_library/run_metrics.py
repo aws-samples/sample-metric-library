@@ -51,6 +51,7 @@ from metric_library.core.evaluation import (
     THROTTLED_CATEGORY,
     EvaluationConfiguration,
     MetricEvaluationResult,
+    _failure_categories,
     _safe_error,
     _scoring_workers,
 )
@@ -308,15 +309,21 @@ def _envelope_value(
     on_sample_error: str,
     advice: str | None = None,
 ) -> float | dict | MetricError:
-    """Map one engine result to the envelope value.
+    """Map one engine result to its ``data.results`` value.
 
     A completed result maps to its aggregate ``values`` object when the
     aggregator provides one (the ``prf`` aggregator), else to its finite
-    float score. A metric fails when no sample completed, and its
-    MetricError names its first failed sample by the record identifier at its
-    ordinal. With ``continue``, that comes after the failure counts and the
-    ``advice``, if any. A metric also fails when the aggregation of its
-    scored samples failed, and its MetricError gives the aggregate's error.
+    float score, so every value that is not an error is a score over every
+    sample. Any other result maps to a MetricError; ``data.partial_results``
+    holds the score of a partial one (``_partial_value``). The error gives the
+    failure counts, with the coverage of a partial result, then the failed
+    samples by error category, the ``advice``, if any, and last the first
+    failed sample, by the record identifier at its ordinal, with its message:
+    ``no sample completed: <counts>; <categories>; sample <id>: <message>``
+    for a failed result. With ``stop``, a failed result, whose first sample
+    failed, gives only ``sample <id>: <message>``. A metric also fails when
+    the aggregation of its scored samples failed, and its MetricError gives
+    the aggregate's error.
     """
     if isinstance(result, MetricError):
         return result
@@ -325,20 +332,39 @@ def _envelope_value(
         return MetricError(
             f"aggregation failed with {aggregate.error_category}: {aggregate.error}"
         )
-    if result.status is EvaluationStatus.FAILED:
-        failed_sample = next(
-            sample for sample in result.samples if sample.status is SampleStatus.FAILED
-        )
-        failure = f"sample {record_ids[failed_sample.ordinal]}: {failed_sample.error}"
-        if on_sample_error == "stop":
-            return MetricError(failure)
-        summary = _failure_counts(result.aggregate)
-        if advice is not None:
-            summary = f"{summary}; {advice}"
-        return MetricError(f"no sample completed: {summary}; {failure}")
+    if result.status is EvaluationStatus.COMPLETED:
+        if result.aggregate.values is not None:
+            return result.aggregate.values
+        return result.score
+    # Only a failed sample stops the scoring, so a result that left samples
+    # out has one.
+    failed_sample = next(
+        sample for sample in result.samples if sample.status is SampleStatus.FAILED
+    )
+    failure = f"sample {record_ids[failed_sample.ordinal]}: {failed_sample.error}"
+    failed = result.status is EvaluationStatus.FAILED
+    if failed and on_sample_error == "stop":
+        return MetricError(failure)
+    counts = _failure_counts(result.aggregate)
+    if not failed:
+        counts = f"{counts} (coverage {_coverage_text(result.aggregate)})"
+    parts = [counts, _failure_categories(result.samples)]
+    if advice is not None:
+        parts.append(advice)
+    parts.append(failure)
+    summary = "; ".join(parts)
+    return MetricError(f"no sample completed: {summary}" if failed else summary)
+
+
+def _partial_value(result: MetricEvaluationResult) -> float | dict:
+    """The ``data.partial_results`` value of a partial result.
+
+    It has the shape of a ``data.results`` value: the aggregate ``values``
+    object of a ``prf`` aggregate, else the score of the completed samples.
+    """
     if result.aggregate.values is not None:
         return result.aggregate.values
-    return result.score
+    return result.partial_score
 
 
 def _coverage_entry(aggregate: AggregationResult) -> dict:
@@ -352,11 +378,14 @@ def _coverage_entry(aggregate: AggregationResult) -> dict:
 
 
 def _coverage_text(aggregate: AggregationResult) -> str:
-    """The coverage rounded down to 3 decimals.
+    """The coverage rounded down to 3 decimals, but never 0 for a coverage above 0.
 
-    Rounding down keeps a coverage below 1 from reading as 1.
+    Rounding down keeps a coverage below 1 from reading as 1, and ``<0.001``
+    replaces the 0 that a coverage above 0 would round down to.
     """
     thousandths = aggregate.succeeded_count * 1000 // aggregate.total_count
+    if thousandths == 0 and aggregate.succeeded_count:
+        return "<0.001"
     return f"{thousandths / 1000:g}"
 
 
@@ -386,7 +415,7 @@ def _throttling_advice(throttled: int, failed: int, workers: int) -> str | None:
         subject = "every failed sample"
     return (
         f"Bedrock throttled {subject}, so run again with max_workers "
-        f"(--max-workers) below {workers}"
+        f"(--max-workers) below {workers} or raise the model's quota"
     )
 
 
@@ -936,11 +965,12 @@ def main():
         help=(
             "What a sample that still fails after its retries does. continue: "
             "the other samples are scored, and the metric gets the score of its "
-            "completed samples, or fails when none completed; it stops early "
-            "only on an error that every later sample would hit too, such as "
-            "expired credentials. stop: the first failed sample stops its "
-            "metric, which gets the score of the samples before it, or fails "
-            "when there are none. Omitted: continue."
+            "completed samples in data.partial_results, or fails when none "
+            "completed; it stops early only on an error that every later "
+            "sample would hit too, such as expired credentials or a wrong "
+            "--model-id. stop: the first failed sample stops its metric, which "
+            "gets the score of the samples before it in data.partial_results, "
+            "or fails when there are none. Omitted: continue."
         ),
     )
     args = parser.parse_args()
@@ -1150,9 +1180,12 @@ def main():
             for name, value in results.items()
             if isinstance(value, MetricEvaluationResult)
         }
-        # One error per metric without a score, and one per metric whose
-        # score leaves out samples that did not complete.
+        # data.results holds only scores over every sample: one error per
+        # metric without a score, and one per metric whose score leaves out
+        # samples that did not complete. data.partial_results holds the score
+        # of each such partial metric.
         values = {}
+        partial_values = {}
         metric_errors = []
         for name, result in results.items():
             advice = _metric_throttling_advice(
@@ -1163,20 +1196,17 @@ def main():
             )
             if isinstance(values[name], MetricError):
                 metric_errors.append(f"{name}: {values[name]['error']}")
-            elif result.status is EvaluationStatus.PARTIAL:
-                entry = (
-                    f"{name}: {_failure_counts(result.aggregate)} "
-                    f"(coverage {_coverage_text(result.aggregate)})"
-                )
-                if advice is not None:
-                    entry = f"{entry}; {advice}"
-                metric_errors.append(entry)
+            if (
+                isinstance(result, MetricEvaluationResult)
+                and result.status is EvaluationStatus.PARTIAL
+            ):
+                partial_values[name] = _partial_value(result)
         # The status of each metric: completed, partial or failed. A metric
         # that raised before scoring, or whose samples all failed, is failed.
         metric_statuses = {
             name: (
                 EvaluationStatus.FAILED.value
-                if isinstance(values[name], MetricError)
+                if isinstance(result, MetricError)
                 else result.status.value
             )
             for name, result in results.items()
@@ -1203,6 +1233,7 @@ def main():
             "status": status,
             "data": {
                 "results": values,
+                "partial_results": partial_values,
                 "status": metric_statuses,
                 "coverage": coverage,
                 "samples": samples,
